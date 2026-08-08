@@ -436,7 +436,7 @@ const CONTENT_SECURITY_POLICY_HEADER = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://www.google.com https://www.gstatic.com https://*.tile.openstreetmap.org https://*.openstreetmap.org",
-  "connect-src 'self' https://api.doorsteptn.in https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.firebaseio.com https://*.firebaseapp.com",
+  "connect-src 'self' https://*.googleapis.com https://*.google.com https://*.gstatic.com https://*.firebaseio.com https://*.firebaseapp.com",
   "frame-src 'self' https://www.google.com/recaptcha/ https://www.recaptcha.net/recaptcha/",
   "worker-src 'self' blob:",
   "manifest-src 'self'",

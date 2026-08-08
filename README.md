@@ -339,13 +339,21 @@ Frontend build/runtime:
 
 ### Local authentication without Firebase
 
-For local development or a private demo, copy `config/local-auth.example.json`
-to `config/local-auth.json` and set the mobile number and four-digit PIN there.
-The real file is ignored by Git. Restart the server after changing it. The
-login screen uses only phone + PIN and creates or upgrades the matching app
-user on its first successful sign-in. No password, Firebase, Google sign-in,
-reCAPTCHA, SMS, or OTP is required. In production, also set
-`LOCAL_AUTH_ENABLED=true` explicitly only for a private demo deployment.
+`config/local-auth.json` is included with three safe demo accounts so a fresh
+clone can run immediately. Each uses PIN `2702` and has no password:
+
+- Customer: `9876543210`
+- Provider: `9876543211`
+- Shop: `9876543212`
+
+Edit that JSON file to add or change phone numbers, PINs, names, roles, or
+languages, then restart the backend. For private credentials that must not be
+committed, copy it to `config/local-auth.local.json` and set
+`LOCAL_AUTH_CONFIG_PATH=config/local-auth.local.json`; that local override is
+ignored by Git. The login screen uses only phone + PIN and creates or upgrades
+the matching app user on its first successful sign-in. No password, Firebase,
+Google sign-in, reCAPTCHA, SMS, or OTP is required. In production, set
+`LOCAL_AUTH_ENABLED=true` only for a private demo deployment.
 
 - API uses cookie sessions.
 - For state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`), include `x-csrf-token`.
@@ -580,7 +588,7 @@ Key toggles:
 
 ## 14. Security Notes
 
-1. Never commit `.env`, local auth credentials, service account JSON, or keystores.
+1. Never commit `.env`, private local-auth overrides, service account JSON, or keystores. The tracked `config/local-auth.json` contains demo-only credentials by design; replace it or use the ignored `config/local-auth.local.json` for any real account.
 2. Keep secrets in secret manager/CI variables for production.
 3. Use strong admin credentials and rotate periodically.
 4. Use HTTPS only for production traffic.
