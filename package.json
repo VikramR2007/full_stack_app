@@ -10,6 +10,7 @@
     "dev:all": "bash scripts/dev-all.sh",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "cross-env NODE_ENV=production node dist/index.js",
+    "setup:local": "bash scripts/setup-local.sh",
     "check": "tsc",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx -r dotenv/config scripts/runMigrations.ts",

@@ -189,7 +189,23 @@ If attaching to an existing database where schema already exists but migration h
 npm run db:migrate:baseline
 ```
 
-### 6.5 Start the app
+### 6.5 One-command local setup
+
+On another machine with the same `.env`, run this from the repository root:
+
+```bash
+bash scripts/setup-local.sh
+```
+
+The script skips tools and npm dependencies that are already installed, installs missing Node.js, PostgreSQL, Redis, and git packages on supported macOS/Linux systems, starts local services when needed, creates the database named by `DATABASE_URL` without dropping it, and runs the migrations. It never sources `.env`, so cron expressions and other dotenv values are handled safely. If Redis is intentionally unavailable, keep `DISABLE_REDIS=true` in `.env`.
+
+After setup, start both processes with:
+
+```bash
+npm run dev:all
+```
+
+### 6.6 Start the app
 
 Use two terminals for full local development:
 
@@ -229,6 +245,7 @@ npm run dev                # API dev server only
 npm run dev:server         # API dev server
 npm run dev:client         # Vite frontend dev server
 npm run dev:all            # API + Vite frontend using the existing .env
+npm run setup:local        # Install local prerequisites, prepare DB/Redis, and migrate
 npm run build              # Build frontend + backend bundle
 npm run start              # Start production server from dist/
 npm run db:generate        # Generate drizzle migration files
