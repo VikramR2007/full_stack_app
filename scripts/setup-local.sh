@@ -373,35 +373,36 @@ run_admin_sql() {
 select_postgres_admin() {
   local configured_admin_url="$1"
   local stripped_admin_url="$2"
+  local capability_query="SELECT rolsuper OR (rolcreatedb AND rolcreaterole) FROM pg_roles WHERE rolname = current_user;"
 
-  if [ -n "$configured_admin_url" ] && psql -X "$configured_admin_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+  if [ -n "$configured_admin_url" ] && psql -X "$configured_admin_url" -Atqc "$capability_query" 2>/dev/null | grep -qx 't'; then
     ADMIN_CONNECTION_MODE=url
     ADMIN_DATABASE_URL="$configured_admin_url"
-    info "PostgreSQL administrator connection is available"
+    info "PostgreSQL administrator connection with database/role privileges is available"
     return
   fi
 
-  if psql -X "$MAINTENANCE_DATABASE_URL" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+  if psql -X "$MAINTENANCE_DATABASE_URL" -Atqc "$capability_query" 2>/dev/null | grep -qx 't'; then
     ADMIN_CONNECTION_MODE=url
     ADMIN_DATABASE_URL="$MAINTENANCE_DATABASE_URL"
-    info "PostgreSQL administrator connection is available"
+    info "PostgreSQL administrator connection with database/role privileges is available"
     return
   fi
 
-  if psql -X "$stripped_admin_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+  if psql -X "$stripped_admin_url" -Atqc "$capability_query" 2>/dev/null | grep -qx 't'; then
     ADMIN_CONNECTION_MODE=url
     ADMIN_DATABASE_URL="$stripped_admin_url"
-    info "PostgreSQL administrator connection is available"
+    info "PostgreSQL administrator connection with database/role privileges is available"
     return
   fi
 
-  if [ "$(uname -s)" = "Linux" ] && is_local_host "$DATABASE_HOST" && run_root -u postgres psql -X -d postgres -Atqc 'SELECT 1' >/dev/null 2>&1; then
+  if [ "$(uname -s)" = "Linux" ] && is_local_host "$DATABASE_HOST" && run_root -u postgres psql -X -d postgres -Atqc "$capability_query" 2>/dev/null | grep -qx 't'; then
     ADMIN_CONNECTION_MODE=postgres_role
-    info "PostgreSQL administrator connection is available through the local postgres role"
+    info "PostgreSQL administrator connection with database/role privileges is available through the local postgres role"
     return
   fi
 
-  die "PostgreSQL is running, but the role in DATABASE_URL does not have an administrator connection. Add DATABASE_ADMIN_URL pointing to a PostgreSQL administrator database such as postgres://postgres:<password>@localhost:5432/postgres, then rerun setup."
+  die "PostgreSQL is reachable, but the selected role lacks CREATEDB/CREATEROLE privileges. Add DATABASE_ADMIN_URL pointing to an administrator database such as postgres://postgres:<password>@localhost:5432/postgres, or grant the local role the required privileges, then rerun setup."
 }
 
 ensure_database_role() {
@@ -450,6 +451,12 @@ ensure_database() {
   local create_sql=""
   local grant_sql=""
 
+  if [ "$RESET_DATABASE" != true ] && psql -X "$database_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    info "Configured PostgreSQL database is available"
+    return
+  fi
+
+  select_postgres_admin "$DATABASE_ADMIN_URL_VALUE" "$STRIPPED_ADMIN_DATABASE_URL"
   ensure_database_role
 
   if [ "$RESET_DATABASE" = true ]; then
@@ -540,7 +547,6 @@ STRIPPED_ADMIN_DATABASE_URL="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const
 
 ensure_postgres_tools
 ensure_postgres_server "$MAINTENANCE_DATABASE_URL" "$DATABASE_HOST"
-select_postgres_admin "$DATABASE_ADMIN_URL_VALUE" "$STRIPPED_ADMIN_DATABASE_URL"
 ensure_database "$DATABASE_URL_VALUE" "$DATABASE_NAME" "$MAINTENANCE_DATABASE_URL"
 ensure_redis
 install_node_dependencies

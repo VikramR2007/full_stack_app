@@ -207,6 +207,20 @@ bash scripts/setup-local.sh --reset-db
 
 `--reset-db` refuses remote database hosts and refuses to reset the `postgres` maintenance database. Back up any local data you need first.
 
+If PostgreSQL reports `permission denied` while creating the local role/database, the account in `DATABASE_URL` is not an administrator. On Linux, verify the local administrator connection with:
+
+```bash
+sudo -u postgres psql -d postgres
+```
+
+On macOS Homebrew PostgreSQL, connect as the account that owns the PostgreSQL cluster:
+
+```bash
+psql -d postgres
+```
+
+Then either grant the local setup role the required `CREATEDB` and `CREATEROLE` privileges, or set an uncommitted `DATABASE_ADMIN_URL` in `.env` to an administrator connection. The setup script does not require the application role to be a superuser once the database already exists.
+
 After setup, start both processes with:
 
 ```bash
