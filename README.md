@@ -329,6 +329,7 @@ Local authentication:
 
 Frontend build/runtime:
 - `VITE_API_URL`
+- `VITE_API_SAME_ORIGIN` (defaults to `true`; set `false` only for a separately hosted API)
 - `VITE_APP_BASE_URL`
 - `VITE_FALLBACK_API_URL`
 - `VITE_ENABLE_DEBUG_LOGS`

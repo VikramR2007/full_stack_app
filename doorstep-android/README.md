@@ -56,7 +56,7 @@ If missing, release build fails by design.
 - download `google-services.json`
 
 2. DoorStep backend API environment
-- reachable HTTPS API domain (default in code: `https://api.doorsteptn.in`)
+- reachable HTTPS API domain (default in code: `https://doorsteptn.in`)
 
 ### 3.2 For Production Release
 
@@ -133,7 +133,7 @@ Run unit tests:
 
 ### 7.1 API base URL
 
-`API_BASE_URL` is defined in `app/build.gradle.kts` (currently `https://api.doorsteptn.in` for debug and release).
+`API_BASE_URL` is defined in `app/build.gradle.kts` (currently `https://doorsteptn.in` for debug and release).
 
 If you need local backend testing, change debug `API_BASE_URL` to your local/QA URL and rebuild.
 

@@ -61,7 +61,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         // API Base URL
-        buildConfigField("String", "API_BASE_URL", "\"https://api.doorsteptn.in\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://doorsteptn.in\"")
         buildConfigField("String", "PRIVACY_POLICY_URL", "\"https://doorsteptn.in/privacy-policy\"")
         buildConfigField("String", "ACCOUNT_DELETION_URL", "\"https://doorsteptn.in/account-deletion\"")
         val resolvedPins = apiCertPins ?: ""
@@ -84,7 +84,7 @@ android {
         debug {
             isMinifyEnabled = false
             // For local development, use emulator-friendly URL
-            buildConfigField("String", "API_BASE_URL", "\"https://api.doorsteptn.in\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://doorsteptn.in\"")
         }
         release {
             isMinifyEnabled = true
@@ -96,7 +96,7 @@ android {
             )
             val releasePins = apiCertPins ?: ""
             val escapedPins = escapeBuildConfig(releasePins)
-            buildConfigField("String", "API_BASE_URL", "\"https://api.doorsteptn.in\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://doorsteptn.in\"")
             buildConfigField("String", "API_CERT_PINS", "\"$escapedPins\"")
         }
     }

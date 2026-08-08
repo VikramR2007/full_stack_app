@@ -3,6 +3,19 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 const normalizeUrl = (value: string) => value.replace(/\/$/, "");
 
 const resolveApiBase = () => {
+  // The web app and API are served from the same origin in the current
+  // deployment. Keeping the session cookie and CSRF token same-origin avoids
+  // cross-origin cookie failures when an old API hostname is configured.
+  const sameOriginSetting = import.meta.env.VITE_API_SAME_ORIGIN?.trim().toLowerCase();
+  const preferSameOrigin = sameOriginSetting !== "false";
+  if (
+    preferSameOrigin &&
+    typeof window !== "undefined" &&
+    window.location?.origin
+  ) {
+    return normalizeUrl(window.location.origin);
+  }
+
   const envUrl = import.meta.env.VITE_API_URL?.trim();
   if (envUrl) {
     return normalizeUrl(envUrl);
