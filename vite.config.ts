@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import themePlugin from "@replit/vite-plugin-shadcn-theme-json";
 import path, { dirname } from "path";
@@ -6,57 +6,74 @@ import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { getNetworkConfig } from "./config/network";
 
-const networkConfig = getNetworkConfig();
-
-const devServerBind = process.env.DEV_SERVER_BIND || "0.0.0.0";
-const devServerPort = Number(
-  process.env.DEV_SERVER_PORT || networkConfig?.devServerPort || 5173,
-);
-const devServerHost =
-  process.env.DEV_SERVER_HOST || networkConfig?.devServerHost;
-const hmrHost =
-  process.env.DEV_SERVER_HMR_HOST ||
-  networkConfig?.devServerHmrHost ||
-  devServerHost ||
-  undefined;
-const hmrPort = process.env.DEV_SERVER_HMR_PORT
-  ? Number(process.env.DEV_SERVER_HMR_PORT)
-  : networkConfig?.devServerHmrPort;
-const hmrProtocol =
-  process.env.DEV_SERVER_HMR_PROTOCOL || networkConfig?.devServerHmrProtocol;
-const normalizedAppBaseUrl = process.env.APP_BASE_URL
-  ? process.env.APP_BASE_URL.replace(/\/$/, "")
-  : undefined;
-
-const apiProxyTarget =
-  process.env.API_PROXY_TARGET ||
-  networkConfig?.apiProxyTarget ||
-  normalizedAppBaseUrl ||
-  "http://localhost:5000";
-
-const hmrConfig: {
-  host?: string;
-  port?: number;
-  protocol?: string;
-  overlay?: boolean;
-} = {
-  overlay: false, // Disable error overlay
-};
-
-if (hmrHost) {
-  hmrConfig.host = hmrHost;
-}
-if (hmrPort) {
-  hmrConfig.port = hmrPort;
-}
-if (hmrProtocol) {
-  hmrConfig.protocol = hmrProtocol;
-}
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineConfig(async ({ mode }) => {
+  // Vite exposes .env values to client code, but does not reliably put them
+  // on process.env while evaluating this config. Load the same env file here
+  // so the dev proxy always targets the port used by the API server.
+  const fileEnv = loadEnv(mode, __dirname, "");
+  const envValue = (key: string): string | undefined =>
+    process.env[key] ?? fileEnv[key];
+  const networkConfig = getNetworkConfig();
+
+  const devServerBind = envValue("DEV_SERVER_BIND") || "0.0.0.0";
+  const devServerPort = Number(
+    envValue("DEV_SERVER_PORT") || networkConfig?.devServerPort || 5173,
+  );
+  const devServerHost =
+    envValue("DEV_SERVER_HOST") || networkConfig?.devServerHost;
+  const hmrHost =
+    envValue("DEV_SERVER_HMR_HOST") ||
+    networkConfig?.devServerHmrHost ||
+    devServerHost ||
+    undefined;
+  const hmrPort = envValue("DEV_SERVER_HMR_PORT")
+    ? Number(envValue("DEV_SERVER_HMR_PORT"))
+    : networkConfig?.devServerHmrPort;
+  const hmrProtocol =
+    envValue("DEV_SERVER_HMR_PROTOCOL") || networkConfig?.devServerHmrProtocol;
+  const hmrConfig: {
+    host?: string;
+    port?: number;
+    protocol?: string;
+    overlay?: boolean;
+  } = {
+    overlay: false, // Disable error overlay
+  };
+  if (hmrHost) {
+    hmrConfig.host = hmrHost;
+  }
+  if (hmrPort) {
+    hmrConfig.port = hmrPort;
+  }
+  if (hmrProtocol) {
+    hmrConfig.protocol = hmrProtocol;
+  }
+  const normalizedAppBaseUrl = envValue("APP_BASE_URL")
+    ?.replace(/\/$/, "");
+  const apiPort = envValue("PORT") || "5000";
+  let appBaseIsLocal = false;
+  if (normalizedAppBaseUrl) {
+    try {
+      const appBaseUrl = new URL(normalizedAppBaseUrl);
+      appBaseIsLocal = ["localhost", "127.0.0.1", "::1"].includes(
+        appBaseUrl.hostname,
+      );
+    } catch {
+      // Leave malformed APP_BASE_URL handling to the normal proxy error path.
+    }
+  }
+
+  const apiProxyTarget =
+    envValue("API_PROXY_TARGET") ||
+    (appBaseIsLocal
+      ? `http://localhost:${apiPort}`
+      : networkConfig?.apiProxyTarget) ||
+    normalizedAppBaseUrl ||
+    `http://localhost:${apiPort}`;
+
   const isProd = mode === "production";
   const replitPlugins =
     !isProd && process.env.REPL_ID !== undefined

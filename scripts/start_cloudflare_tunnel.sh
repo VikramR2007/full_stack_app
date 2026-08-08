@@ -5,6 +5,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_PATH="${NETWORK_CONFIG_PATH:-${REPO_ROOT}/config/network-config.json}"
+
+env_value() {
+  awk -F= -v key="$1" '
+    $0 !~ /^[[:space:]]*#/ && $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      sub(/\r$/, "", value)
+      print value
+      exit
+    }
+  ' "${REPO_ROOT}/.env" 2>/dev/null || true
+}
+
+if [[ -z "${PORT:-}" ]]; then
+  PORT="$(env_value PORT)"
+fi
 PORT="${PORT:-5000}"
 
 if ! command -v cloudflared >/dev/null 2>&1; then
