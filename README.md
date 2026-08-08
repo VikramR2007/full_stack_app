@@ -210,6 +210,14 @@ Open:
 - API health: `http://localhost:5000/api/health`
 - Swagger UI: `http://localhost:5000/api/docs`
 
+Or start both processes with one command using the existing `.env` file:
+
+```bash
+npm run dev:all
+```
+
+Press `Ctrl+C` once to stop both the API and frontend.
+
 Important behavior:
 - `npm run dev` starts only the server.
 - `npm run build && npm run start` serves built frontend from `dist/public` through Express.
@@ -220,6 +228,7 @@ Important behavior:
 npm run dev                # API dev server only
 npm run dev:server         # API dev server
 npm run dev:client         # Vite frontend dev server
+npm run dev:all            # API + Vite frontend using the existing .env
 npm run build              # Build frontend + backend bundle
 npm run start              # Start production server from dist/
 npm run db:generate        # Generate drizzle migration files
