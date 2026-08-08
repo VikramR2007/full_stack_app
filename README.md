@@ -197,7 +197,15 @@ On another machine with the same `.env`, run this from the repository root:
 bash scripts/setup-local.sh
 ```
 
-The script skips tools and npm dependencies that are already installed, installs missing Node.js, PostgreSQL, Redis, and git packages on supported macOS/Linux systems, starts local services when needed, creates the database named by `DATABASE_URL` without dropping it, and runs the migrations. It never sources `.env`, so cron expressions and other dotenv values are handled safely. If Redis is intentionally unavailable, keep `DISABLE_REDIS=true` in `.env`.
+The script skips tools and npm dependencies that are already installed, supports installed PostgreSQL 18 (and other PostgreSQL versions), starts local services when needed, creates the role/database named by `DATABASE_URL` when they are missing, and runs the migrations. It never sources `.env`, so cron expressions and other dotenv values are handled safely. If the URL role cannot be created through the local administrator account, add an uncommitted `DATABASE_ADMIN_URL` pointing to the `postgres` maintenance database. If Redis is intentionally unavailable, keep `DISABLE_REDIS=true` in `.env`.
+
+The normal setup never deletes a database. For a disposable local database whose schema is genuinely corrupted, explicitly reset only the database named by `DATABASE_URL` and rebuild it:
+
+```bash
+bash scripts/setup-local.sh --reset-db
+```
+
+`--reset-db` refuses remote database hosts and refuses to reset the `postgres` maintenance database. Back up any local data you need first.
 
 After setup, start both processes with:
 
@@ -246,6 +254,7 @@ npm run dev:server         # API dev server
 npm run dev:client         # Vite frontend dev server
 npm run dev:all            # API + Vite frontend using the existing .env
 npm run setup:local        # Install local prerequisites, prepare DB/Redis, and migrate
+npm run setup:local -- --reset-db  # Explicitly rebuild the configured local dev database
 npm run build              # Build frontend + backend bundle
 npm run start              # Start production server from dist/
 npm run db:generate        # Generate drizzle migration files

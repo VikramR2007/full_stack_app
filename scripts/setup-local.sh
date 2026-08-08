@@ -12,6 +12,9 @@ cd "$REPO_DIR"
 
 MIN_NODE_MAJOR=20
 APT_UPDATED=0
+RESET_DATABASE=false
+ADMIN_CONNECTION_MODE=""
+ADMIN_DATABASE_URL=""
 
 die() {
   printf 'Setup failed: %s\n' "$1" >&2
@@ -25,6 +28,22 @@ info() {
 warn() {
   printf '[setup] warning: %s\n' "$1" >&2
 }
+
+for argument in "$@"; do
+  case "$argument" in
+    --reset-db)
+      RESET_DATABASE=true
+      ;;
+    --help|-h)
+      printf 'Usage: bash scripts/setup-local.sh [--reset-db]\n'
+      printf '  --reset-db  Drop and recreate only the local database named by DATABASE_URL.\n'
+      exit 0
+      ;;
+    *)
+      die "Unknown option: $argument. Use --help for supported options."
+      ;;
+  esac
+done
 
 env_value() {
   local key="$1"
@@ -153,16 +172,22 @@ install_postgres_on_linux() {
 }
 
 ensure_postgres_tools() {
-  if command -v psql >/dev/null 2>&1; then
+  if command -v psql >/dev/null 2>&1 && command -v pg_isready >/dev/null 2>&1; then
     return
   fi
 
   case "$(uname -s)" in
     Darwin)
       ensure_homebrew
-      info "Installing PostgreSQL 16 with Homebrew"
-      brew install postgresql@16
-      brew link --overwrite --force postgresql@16 >/dev/null 2>&1 || true
+      local installed_formula="$(brew list --formula 2>/dev/null | awk '/^postgresql(@[0-9]+)?$/ { print }' | tail -n 1)"
+      if [ -n "$installed_formula" ]; then
+        info "Linking installed PostgreSQL client ($installed_formula)"
+        brew link --overwrite --force "$installed_formula" >/dev/null 2>&1 || true
+      else
+        info "Installing PostgreSQL with Homebrew"
+        brew install postgresql
+        brew link --overwrite --force postgresql >/dev/null 2>&1 || true
+      fi
       ;;
     Linux)
       install_postgres_on_linux
@@ -173,6 +198,7 @@ ensure_postgres_tools() {
   esac
 
   command -v psql >/dev/null 2>&1 || die "PostgreSQL installation did not provide the psql command."
+  command -v pg_isready >/dev/null 2>&1 || die "PostgreSQL installation did not provide the pg_isready command."
 }
 
 postgres_formula() {
@@ -193,6 +219,10 @@ postgres_formula() {
 
 start_postgres() {
   local formula=""
+  local cluster=""
+  local cluster_version=""
+  local cluster_name=""
+  local service_units=""
 
   case "$(uname -s)" in
     Darwin)
@@ -202,8 +232,20 @@ start_postgres() {
       brew services start "$formula" >/dev/null
       ;;
     Linux)
+      if command -v pg_lsclusters >/dev/null 2>&1 && command -v pg_ctlcluster >/dev/null 2>&1; then
+        cluster="$(pg_lsclusters --no-header 2>/dev/null | awk '$4 != "online" { print $1 ":" $2; exit }')"
+        if [ -n "$cluster" ]; then
+          cluster_version="${cluster%%:*}"
+          cluster_name="${cluster#*:}"
+          run_root pg_ctlcluster "$cluster_version" "$cluster_name" start 2>/dev/null || true
+        fi
+      fi
       if command -v systemctl >/dev/null 2>&1; then
-        run_root systemctl start postgresql 2>/dev/null || run_root systemctl start postgresql@16 2>/dev/null || true
+        run_root systemctl start postgresql 2>/dev/null || true
+        service_units="$(systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '$1 ~ /^postgresql/ { print $1 }')"
+        for service_unit in $service_units; do
+          run_root systemctl start "$service_unit" 2>/dev/null || true
+        done
       elif command -v service >/dev/null 2>&1; then
         run_root service postgresql start 2>/dev/null || true
       fi
@@ -214,8 +256,9 @@ start_postgres() {
 ensure_postgres_server() {
   local maintenance_url="$1"
   local database_host="$2"
+  local attempt=0
 
-  if psql -X "$maintenance_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+  if pg_isready -q -d "$maintenance_url" >/dev/null 2>&1; then
     info "PostgreSQL is available"
     return
   fi
@@ -225,9 +268,15 @@ ensure_postgres_server() {
   fi
 
   start_postgres
-  sleep 2
-  psql -X "$maintenance_url" -Atqc 'SELECT 1' >/dev/null 2>&1 || die "PostgreSQL is installed but not reachable using DATABASE_URL. Check the host, port, user, and password in .env."
-  info "PostgreSQL is available"
+  for attempt in $(seq 1 30); do
+    if pg_isready -q -d "$maintenance_url" >/dev/null 2>&1; then
+      info "PostgreSQL is available"
+      return
+    fi
+    sleep 1
+  done
+
+  die "PostgreSQL is installed but not reachable at the DATABASE_URL host. Check that the PostgreSQL 18 service is running and that the host/port in .env are correct."
 }
 
 install_redis_on_linux() {
@@ -301,11 +350,114 @@ ensure_redis() {
   info "Redis is available"
 }
 
+run_admin_psql() {
+  case "$ADMIN_CONNECTION_MODE" in
+    url)
+      psql -X "$ADMIN_DATABASE_URL" "$@"
+      ;;
+    postgres_role)
+      run_root -u postgres psql -X "$@"
+      ;;
+    *)
+      die "PostgreSQL administrator connection was not initialized."
+      ;;
+  esac
+}
+
+run_admin_sql() {
+  local sql="$1"
+  shift
+  printf '%s\n' "$sql" | run_admin_psql "$@"
+}
+
+select_postgres_admin() {
+  local configured_admin_url="$1"
+  local stripped_admin_url="$2"
+
+  if [ -n "$configured_admin_url" ] && psql -X "$configured_admin_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    ADMIN_CONNECTION_MODE=url
+    ADMIN_DATABASE_URL="$configured_admin_url"
+    info "PostgreSQL administrator connection is available"
+    return
+  fi
+
+  if psql -X "$MAINTENANCE_DATABASE_URL" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    ADMIN_CONNECTION_MODE=url
+    ADMIN_DATABASE_URL="$MAINTENANCE_DATABASE_URL"
+    info "PostgreSQL administrator connection is available"
+    return
+  fi
+
+  if psql -X "$stripped_admin_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    ADMIN_CONNECTION_MODE=url
+    ADMIN_DATABASE_URL="$stripped_admin_url"
+    info "PostgreSQL administrator connection is available"
+    return
+  fi
+
+  if [ "$(uname -s)" = "Linux" ] && is_local_host "$DATABASE_HOST" && run_root -u postgres psql -X -d postgres -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    ADMIN_CONNECTION_MODE=postgres_role
+    info "PostgreSQL administrator connection is available through the local postgres role"
+    return
+  fi
+
+  die "PostgreSQL is running, but the role in DATABASE_URL does not have an administrator connection. Add DATABASE_ADMIN_URL pointing to a PostgreSQL administrator database such as postgres://postgres:<password>@localhost:5432/postgres, then rerun setup."
+}
+
+ensure_database_role() {
+  local role_exists=""
+  local role_sql=""
+
+  [ -n "$DATABASE_USER" ] || return
+
+  role_exists="$(run_admin_sql "SELECT 1 FROM pg_roles WHERE rolname = :'database_role';" -v database_role="$DATABASE_USER" -Atq | tr -d '[:space:]')"
+  if [ "$role_exists" != "1" ]; then
+    info "Creating PostgreSQL role from DATABASE_URL"
+    role_sql="SELECT format('CREATE ROLE %I LOGIN%s', :'database_role', CASE WHEN :'database_password' = '' THEN '' ELSE format(' PASSWORD %L', :'database_password') END) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_role');
+\\gexec"
+    run_admin_sql "$role_sql" -v database_role="$DATABASE_USER" -v database_password="$DATABASE_PASSWORD" -Atq
+  elif [ -n "$DATABASE_PASSWORD" ] && is_local_host "$DATABASE_HOST"; then
+    role_sql="SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'database_role', :'database_password') WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_role');
+\\gexec"
+    run_admin_sql "$role_sql" -v database_role="$DATABASE_USER" -v database_password="$DATABASE_PASSWORD" -Atq
+  else
+    role_sql="SELECT format('ALTER ROLE %I LOGIN', :'database_role') WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_role');
+\\gexec"
+    run_admin_sql "$role_sql" -v database_role="$DATABASE_USER" -Atq
+  fi
+}
+
+reset_database() {
+  local terminate_sql=""
+  local drop_sql=""
+
+  [ "$DATABASE_NAME" != "postgres" ] || die "Refusing to reset the postgres maintenance database. Set DATABASE_URL to the application database."
+  info "Resetting local PostgreSQL database $DATABASE_NAME"
+
+  terminate_sql="SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'database_name' AND pid <> pg_backend_pid();"
+  run_admin_sql "$terminate_sql" -v database_name="$DATABASE_NAME" -Atq >/dev/null
+
+  drop_sql="SELECT format('DROP DATABASE IF EXISTS %I', :'database_name');
+\\gexec"
+  run_admin_sql "$drop_sql" -v database_name="$DATABASE_NAME" -Atq
+}
+
 ensure_database() {
   local database_url="$1"
   local database_name="$2"
   local maintenance_url="$3"
   local database_exists=""
+  local create_sql=""
+  local grant_sql=""
+
+  ensure_database_role
+
+  if [ "$RESET_DATABASE" = true ]; then
+    if ! is_local_host "$DATABASE_HOST"; then
+      die "--reset-db is allowed only when DATABASE_URL points to localhost."
+    fi
+    reset_database
+  fi
 
   if psql -X "$database_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
     info "Configured PostgreSQL database is available"
@@ -313,9 +465,15 @@ ensure_database() {
   fi
 
   info "Creating PostgreSQL database $database_name if it does not exist"
-  database_exists="$(psql -X "$maintenance_url" -Atqc "SELECT 1 FROM pg_database WHERE datname = '$database_name'" | tr -d '[:space:]')"
+  database_exists="$(run_admin_sql "SELECT 1 FROM pg_database WHERE datname = :'database_name';" -v database_name="$database_name" -Atq | tr -d '[:space:]')"
   if [ "$database_exists" != "1" ]; then
-    psql -X "$maintenance_url" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$database_name\";"
+    create_sql="SELECT format('CREATE DATABASE %I%s', :'database_name', CASE WHEN :'database_role' = '' THEN '' ELSE format(' OWNER %I', :'database_role') END);
+\\gexec"
+    run_admin_sql "$create_sql" -v database_name="$database_name" -v database_role="$DATABASE_USER" -Atq
+  elif [ -n "$DATABASE_USER" ]; then
+    grant_sql="SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'database_name', :'database_role');
+\\gexec"
+    run_admin_sql "$grant_sql" -v database_name="$database_name" -v database_role="$DATABASE_USER" -Atq
   fi
 
   psql -X "$database_url" -Atqc 'SELECT 1' >/dev/null 2>&1 || die "The PostgreSQL database was found/created, but DATABASE_URL still cannot connect to it."
@@ -355,13 +513,14 @@ run_database_migrations() {
     return
   fi
 
-  die "Database migration failed. Review the migration error above; no database reset was attempted."
+  die "Database migration failed. Review the migration error above; no database reset was attempted. If this is a disposable local database, rerun with: bash scripts/setup-local.sh --reset-db"
 }
 
 [ -f .env ] || die "Missing .env. Copy .env_example to .env and keep the environment values for this machine."
 
 DATABASE_URL_VALUE="$(env_value DATABASE_URL)"
 [ -n "$DATABASE_URL_VALUE" ] || die "DATABASE_URL is missing from .env."
+DATABASE_ADMIN_URL_VALUE="$(env_value DATABASE_ADMIN_URL)"
 
 ensure_git
 ensure_node
@@ -374,10 +533,14 @@ case "$DATABASE_NAME" in
 esac
 
 DATABASE_HOST="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const u = new URL(process.env.DATABASE_URL); process.stdout.write(u.hostname);')"
+DATABASE_USER="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const u = new URL(process.env.DATABASE_URL); process.stdout.write(u.username ? decodeURIComponent(u.username) : "");')"
+DATABASE_PASSWORD="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const u = new URL(process.env.DATABASE_URL); process.stdout.write(u.password ? decodeURIComponent(u.password) : "");')"
 MAINTENANCE_DATABASE_URL="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const u = new URL(process.env.DATABASE_URL); u.pathname = "/postgres"; process.stdout.write(u.toString());')"
+STRIPPED_ADMIN_DATABASE_URL="$(DATABASE_URL="$DATABASE_URL_VALUE" node -e 'const u = new URL(process.env.DATABASE_URL); u.username = ""; u.password = ""; u.pathname = "/postgres"; process.stdout.write(u.toString());')"
 
 ensure_postgres_tools
 ensure_postgres_server "$MAINTENANCE_DATABASE_URL" "$DATABASE_HOST"
+select_postgres_admin "$DATABASE_ADMIN_URL_VALUE" "$STRIPPED_ADMIN_DATABASE_URL"
 ensure_database "$DATABASE_URL_VALUE" "$DATABASE_NAME" "$MAINTENANCE_DATABASE_URL"
 ensure_redis
 install_node_dependencies
