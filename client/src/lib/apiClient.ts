@@ -38,10 +38,15 @@ apiClient.axios.interceptors.response.use(
     const method = config?.method
       ? String(config.method).toUpperCase()
       : undefined;
+    const errorCode = error?.response?.data?.code;
+    const errorMessage = String(error?.response?.data?.message ?? "");
+    const isCsrfFailure =
+      errorCode === "CSRF_TOKEN_INVALID" || /csrf token/i.test(errorMessage);
 
     if (
       config &&
       status === 403 &&
+      isCsrfFailure &&
       method &&
       !CSRF_SAFE_METHODS.has(method) &&
       !config.__csrfRetry

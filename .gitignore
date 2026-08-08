@@ -13,6 +13,7 @@ doorstep-android/release.env
 /output/security
 app.log
 config/network-config.json
+config/local-auth.json
 
 # ================== Android ==================
 # Build outputs (catches 2000+ files)

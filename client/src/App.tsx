@@ -9,8 +9,6 @@ import { UserProvider } from "@/contexts/UserContext";
 import { ProtectedRoute } from "./lib/protected-route";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
-import PermissionRequester from "@/components/PermissionRequester"; // Import the new component
-import { PushNotificationManager } from "@/components/PushNotificationManager";
 import React, { Suspense, lazy } from "react";
 import { useClientPerformanceMetrics } from "@/hooks/use-client-performance-metrics";
 import { useRealtimeUpdates } from "@/hooks/use-realtime-updates";
@@ -231,8 +229,6 @@ function App() {
             <AuthGate>
               <ClientPerformanceMetricsTracker />
               <RealtimeBridge />
-              <PermissionRequester />
-              <PushNotificationManager />
               <AdminProvider>
                 <ErrorBoundary>
                   <Suspense

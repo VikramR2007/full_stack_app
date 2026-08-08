@@ -344,6 +344,16 @@ Frontend build/runtime:
 
 ## 9. Authentication, Sessions, and CSRF
 
+### Local authentication without Firebase
+
+For local development or a private demo, copy `config/local-auth.example.json`
+to `config/local-auth.json` and set the mobile number, password, optional
+six-digit OTP, and optional four-digit Android PIN there. The real file is ignored by Git. Restart the server after
+changing it. The login screen uses this file and creates the matching app user
+on its first successful sign-in; Firebase, Google sign-in, reCAPTCHA, and SMS
+are not used. Android uses the optional `pin` from the same entry. In
+production, also set `LOCAL_AUTH_ENABLED=true` explicitly.
+
 - API uses cookie sessions.
 - For state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`), include `x-csrf-token`.
 - Fetch token from `GET /api/csrf-token`.

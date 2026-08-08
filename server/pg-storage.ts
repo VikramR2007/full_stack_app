@@ -2875,7 +2875,10 @@ export class PostgresStorage implements IStorage {
 
     // Send push notification via FCM if user has registered tokens
     const notificationUserId = newNotification?.userId;
-    if (typeof notificationUserId === "number") {
+    if (
+      process.env.PUSH_NOTIFICATIONS_ENABLED === "true" &&
+      typeof notificationUserId === "number"
+    ) {
       void enqueuePushNotificationDispatch({
         userId: notificationUserId,
         title: newNotification.title,
@@ -2931,6 +2934,10 @@ export class PostgresStorage implements IStorage {
     type: string,
     relatedId?: number | null,
   ): Promise<void> {
+    if (process.env.PUSH_NOTIFICATIONS_ENABLED !== "true") {
+      return;
+    }
+
     try {
       // Dynamic import to avoid circular dependencies
       const { sendPushToTokens, createPushData } = await import("./services/push-notification");

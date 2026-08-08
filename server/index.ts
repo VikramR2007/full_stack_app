@@ -798,7 +798,9 @@ app.get("/api/health/ready", async (_req, res) => {
 export async function startServer(port?: number) {
   // Register handlers before starting worker so pending jobs always have processors.
   if (process.env.NODE_ENV !== "test") {
-    registerPushNotificationDispatchJob(dbStorage);
+    if (process.env.PUSH_NOTIFICATIONS_ENABLED === "true") {
+      registerPushNotificationDispatchJob(dbStorage);
+    }
     if (isQueueRedisEnabled()) {
       startBookingExpirationJob(dbStorage);
       startPaymentReminderJob(dbStorage);
@@ -839,7 +841,10 @@ export async function startServer(port?: number) {
         },
         "CSRF token validation failed",
       );
-      return res.status(403).json({ message: "Invalid or missing CSRF token" });
+      return res.status(403).json({
+        code: "CSRF_TOKEN_INVALID",
+        message: "Invalid or missing CSRF token",
+      });
     }
     next(err);
   });

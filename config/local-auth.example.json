@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "users": [
+    {
+      "phone": "9876543210",
+      "password": "change-this-password",
+      "otp": "123456",
+      "pin": "1234",
+      "name": "Local Test User",
+      "role": "customer",
+      "language": "en"
+    }
+  ]
+}

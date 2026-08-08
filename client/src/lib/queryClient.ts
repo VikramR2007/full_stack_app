@@ -41,6 +41,12 @@ export type ApiRequestOptions = {
   allowStatuses?: number[];
 };
 
+async function isCsrfFailure(res: Response): Promise<boolean> {
+  if (res.status !== 403) return false;
+  const body = await res.clone().text();
+  return /csrf_token_invalid|csrf token/i.test(body);
+}
+
 async function fetchCsrfToken(): Promise<string> {
   const res = await fetch(`${API_BASE_URL}/api/csrf-token`, {
     credentials: "include",
@@ -63,13 +69,15 @@ export async function getCsrfToken(forceRefresh = false): Promise<string> {
   }
 
   if (!csrfPromise) {
-    csrfPromise = fetchCsrfToken().then((token) => {
-      csrfToken = token;
-      return token;
-    });
-    csrfPromise.finally(() => {
-      csrfPromise = null;
-    });
+    csrfPromise = (async () => {
+      try {
+        const token = await fetchCsrfToken();
+        csrfToken = token;
+        return token;
+      } finally {
+        csrfPromise = null;
+      }
+    })();
   }
 
   return csrfPromise;
@@ -106,7 +114,11 @@ async function performApiRequest(
     credentials: "include",
   });
 
-  if (!CSRF_SAFE_METHODS.has(upperMethod) && res.status === 403 && attempt === 0) {
+  if (
+    !CSRF_SAFE_METHODS.has(upperMethod) &&
+    attempt === 0 &&
+    await isCsrfFailure(res)
+  ) {
     return performApiRequest(method, url, data, attempt + 1, options);
   }
 

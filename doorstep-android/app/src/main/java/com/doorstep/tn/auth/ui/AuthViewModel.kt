@@ -11,10 +11,6 @@ import com.doorstep.tn.core.datastore.PreferenceKeys
 import com.doorstep.tn.core.datastore.dataStore
 import com.doorstep.tn.core.security.SecureSessionStore
 import com.doorstep.tn.core.security.SecureUserStore
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.PhoneAuthCredential
-import com.google.firebase.auth.PhoneAuthOptions
-import com.google.firebase.auth.PhoneAuthProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,8 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 /**
@@ -34,8 +28,6 @@ class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
-    
-    private val firebaseAuth = FirebaseAuth.getInstance()
     
     // UI State
     private val _isLoading = MutableStateFlow(false)
@@ -87,10 +79,6 @@ class AuthViewModel @Inject constructor(
     private val _language = MutableStateFlow("en")
     val language: StateFlow<String> = _language.asStateFlow()
     
-    // OTP Verification
-    private var verificationId: String? = null
-    private var firebaseIdToken: String? = null
-    
     // User exists check result
     private val _userExists = MutableStateFlow(false)
     val userExists: StateFlow<Boolean> = _userExists.asStateFlow()
@@ -107,7 +95,6 @@ class AuthViewModel @Inject constructor(
                 if (migrated) {
                     SecureUserStore.clearLegacyDataStore(context)
                 }
-                SecureUserStore.migrateLegacyFcmPrefs(context)
                 _isLoggedIn.value = prefs[PreferenceKeys.IS_LOGGED_IN] ?: false
                 _userRole.value = SecureUserStore.getUserRole(context)
                 _userName.value = SecureUserStore.getUserName(context)
@@ -155,7 +142,6 @@ class AuthViewModel @Inject constructor(
                             }
                         }
                     }
-                    syncFcmToken()
                 }
                 is Result.Error -> {
                     // Clear stale local session if backend marks this cookie/session invalid.
@@ -230,7 +216,7 @@ class AuthViewModel @Inject constructor(
     
     /**
      * Check if user exists by phone number
-     * @param activity Required for Firebase Phone Auth reCAPTCHA
+     * The activity parameter is retained to keep the existing Compose screen API stable.
      */
     fun checkUser(
         activity: android.app.Activity,
@@ -258,8 +244,7 @@ class AuthViewModel @Inject constructor(
                     if (result.data.exists) {
                         onExistingUser()
                     } else {
-                        // New user - need to send OTP
-                        sendOtpWithActivity(activity, onSuccess = onNewUser)
+                        _error.value = "This mobile number is not configured for local sign-in. Add it to config/local-auth.json first."
                     }
                 }
                 is Result.Error -> {
@@ -272,61 +257,11 @@ class AuthViewModel @Inject constructor(
     }
     
     /**
-     * Send OTP via Firebase - requires Activity for reCAPTCHA
+     * Firebase/SMS is disabled for the local build. Configure the mobile number
+     * and PIN in config/local-auth.json, then use the existing-user sign-in path.
      */
-    fun sendOtpWithActivity(activity: android.app.Activity, onSuccess: () -> Unit) {
-        val phoneNumber = "+91${_phone.value}"
-        
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-            
-            val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
-                override fun onVerificationCompleted(credential: PhoneAuthCredential) {
-                    // Auto-verification (rare, mainly for testing)
-                    viewModelScope.launch {
-                        try {
-                            val authResult = firebaseAuth.signInWithCredential(credential).await()
-                            firebaseIdToken = authResult.user?.getIdToken(true)?.await()?.token
-                            _isLoading.value = false
-                            onSuccess()
-                        } catch (e: Exception) {
-                            _isLoading.value = false
-                            _error.value = e.message ?: "Auto-verification failed"
-                        }
-                    }
-                }
-                
-                override fun onVerificationFailed(e: com.google.firebase.FirebaseException) {
-                    _isLoading.value = false
-                    _error.value = when {
-                        e.message?.contains("blocked") == true -> 
-                            "Too many requests. Please try again later."
-                        e.message?.contains("invalid") == true ->
-                            "Invalid phone number. Please check and try again."
-                        else -> e.message ?: "Failed to send OTP"
-                    }
-                }
-                
-                override fun onCodeSent(
-                    vId: String,
-                    token: PhoneAuthProvider.ForceResendingToken
-                ) {
-                    verificationId = vId
-                    _isLoading.value = false
-                    onSuccess()
-                }
-            }
-            
-            val options = PhoneAuthOptions.newBuilder(firebaseAuth)
-                .setPhoneNumber(phoneNumber)
-                .setTimeout(60L, TimeUnit.SECONDS)
-                .setActivity(activity)
-                .setCallbacks(callbacks)
-                .build()
-            
-            PhoneAuthProvider.verifyPhoneNumber(options)
-        }
+    fun sendOtpWithActivity(_activity: android.app.Activity, _onSuccess: () -> Unit) {
+        _error.value = "SMS OTP is disabled. Use a mobile number and PIN configured by the app owner."
     }
     
     /**
@@ -338,27 +273,7 @@ class AuthViewModel @Inject constructor(
             return
         }
         
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-            
-            try {
-                // Verify OTP with Firebase and get ID token
-                // In production, use PhoneAuthCredential
-                verificationId?.let { verId ->
-                    val credential = PhoneAuthProvider.getCredential(verId, _otp.value)
-                    val authResult = firebaseAuth.signInWithCredential(credential).await()
-                    firebaseIdToken = authResult.user?.getIdToken(true)?.await()?.token
-                    onSuccess()
-                } ?: run {
-                    _error.value = "OTP session expired. Please request a new OTP."
-                }
-            } catch (e: Exception) {
-                _error.value = e.message ?: "OTP verification failed"
-            }
-            
-            _isLoading.value = false
-        }
+        _error.value = "SMS OTP is disabled in this build. Use the configured PIN to sign in."
     }
     
     /**
@@ -408,35 +323,7 @@ class AuthViewModel @Inject constructor(
             return
         }
         
-        val token = firebaseIdToken
-        if (token == null) {
-            _error.value = "Session expired. Please verify your phone again."
-            return
-        }
-        
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-            
-            when (val result = authRepository.ruralRegister(
-                firebaseIdToken = token,
-                name = _name.value.trim(),
-                pin = _pin.value,
-                role = _selectedRole.value,
-                language = _language.value
-            )) {
-                is Result.Success -> {
-                    saveUserSession(result.data)
-                    onSuccess(result.data.role ?: "customer")
-                }
-                is Result.Error -> {
-                    _error.value = result.message
-                }
-                is Result.Loading -> {}
-            }
-            
-            _isLoading.value = false
-        }
+        _error.value = "Self-registration is disabled. Add this user to config/local-auth.json, then sign in with its PIN."
     }
     
     /**
@@ -444,9 +331,7 @@ class AuthViewModel @Inject constructor(
      */
     fun logout() {
         viewModelScope.launch {
-            unregisterFcmTokenBeforeLogout()
             authRepository.logout()
-            firebaseAuth.signOut()
             SecureSessionStore.clearSession(context)
             SecureUserStore.clearUser(context)
             
@@ -516,28 +401,7 @@ class AuthViewModel @Inject constructor(
             return
         }
         
-        val token = firebaseIdToken
-        if (token == null) {
-            _error.value = "Session expired. Please verify your phone again."
-            return
-        }
-        
-        viewModelScope.launch {
-            _isLoading.value = true
-            _error.value = null
-            
-            when (val result = authRepository.resetPin(token, _pin.value)) {
-                is Result.Success -> {
-                    onSuccess()
-                }
-                is Result.Error -> {
-                    _error.value = result.message
-                }
-                is Result.Loading -> {}
-            }
-            
-            _isLoading.value = false
-        }
+        _error.value = "PIN resets are disabled. Change the PIN in config/local-auth.json and restart the server."
     }
 
     /**
@@ -622,7 +486,6 @@ class AuthViewModel @Inject constructor(
     // ==================== Private Helpers ====================
 
     private suspend fun clearLocalAuthState() {
-        firebaseAuth.signOut()
         SecureSessionStore.clearSession(context)
         SecureUserStore.clearUser(context)
         context.dataStore.edit { prefs ->
@@ -640,30 +503,6 @@ class AuthViewModel @Inject constructor(
         _hasProviderProfile.value = false
     }
 
-    private suspend fun unregisterFcmTokenBeforeLogout() {
-        val storedToken = SecureUserStore.getFcmToken(context)
-        if (storedToken.isNullOrBlank()) {
-            return
-        }
-
-        when (authRepository.unregisterFcmToken(storedToken)) {
-            is Result.Success -> {
-                SecureUserStore.setFcmNeedsSync(context, false)
-                if (com.doorstep.tn.BuildConfig.DEBUG) {
-                    android.util.Log.d("AuthViewModel", "FCM token unregistered successfully")
-                }
-            }
-            is Result.Error -> {
-                // Keep token local so we can retry cleanup if needed.
-                SecureUserStore.setFcmNeedsSync(context, true)
-                if (com.doorstep.tn.BuildConfig.DEBUG) {
-                    android.util.Log.w("AuthViewModel", "Failed to unregister FCM token on logout")
-                }
-            }
-            is Result.Loading -> Unit
-        }
-    }
-    
     private suspend fun saveUserSession(user: UserResponse) {
         context.dataStore.edit { prefs ->
             prefs[PreferenceKeys.IS_LOGGED_IN] = true
@@ -684,8 +523,6 @@ class AuthViewModel @Inject constructor(
         _hasShopProfile.value = user.hasShopProfile == true
         _hasProviderProfile.value = user.hasProviderProfile == true
         
-        // Register FCM token with backend after successful login
-        syncFcmToken(force = true)
     }
 
     private fun updateProfileFlags(hasShop: Boolean? = null, hasProvider: Boolean? = null) {
@@ -704,50 +541,4 @@ class AuthViewModel @Inject constructor(
         }
     }
     
-    /**
-     * Sync FCM token with backend after login
-     * This ensures push notifications work for the logged-in user
-     */
-    private fun syncFcmToken(force: Boolean = false) {
-        viewModelScope.launch {
-            try {
-                val storedToken = SecureUserStore.getFcmToken(context)
-                val needsSync = SecureUserStore.getFcmNeedsSync(context)
-
-                if (!force && !needsSync) {
-                    return@launch
-                }
-                
-                if (storedToken != null) {
-                    // Register with backend
-                    val response = authRepository.registerFcmToken(
-                        token = storedToken,
-                        platform = "android",
-                        deviceInfo = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-                    )
-                    if (response is Result.Success) {
-                        if (com.doorstep.tn.BuildConfig.DEBUG) {
-                            android.util.Log.d("AuthViewModel", "FCM token synced successfully")
-                        }
-                        SecureUserStore.setFcmNeedsSync(context, false)
-                    } else {
-                        if (com.doorstep.tn.BuildConfig.DEBUG) {
-                            android.util.Log.w("AuthViewModel", "Failed to sync FCM token")
-                        }
-                        SecureUserStore.setFcmNeedsSync(context, true)
-                    }
-                } else {
-                    // No token yet, it will be registered when onNewToken() is called
-                    if (com.doorstep.tn.BuildConfig.DEBUG) {
-                        android.util.Log.d("AuthViewModel", "No FCM token stored yet, will sync when available")
-                    }
-                }
-            } catch (e: Exception) {
-                if (com.doorstep.tn.BuildConfig.DEBUG) {
-                    android.util.Log.e("AuthViewModel", "Error syncing FCM token", e)
-                }
-                SecureUserStore.setFcmNeedsSync(context, true)
-            }
-        }
-    }
 }

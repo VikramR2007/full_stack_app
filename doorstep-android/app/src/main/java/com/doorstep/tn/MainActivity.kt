@@ -1,26 +1,19 @@
 package com.doorstep.tn
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.core.content.ContextCompat
 import com.doorstep.tn.common.theme.DoorStepTheme
-import com.doorstep.tn.core.security.SecureUserStore
 import com.doorstep.tn.navigation.DoorStepNavHost
 import com.doorstep.tn.navigation.Routes
-import com.google.firebase.messaging.FirebaseMessaging
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
@@ -42,28 +35,12 @@ class MainActivity : ComponentActivity() {
         }
     }
     
-    // Permission launcher for Android 13+ notification permission
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            logDebug("Notification permission granted")
-            // Get FCM token after permission is granted
-            refreshFcmToken()
-        } else {
-            logWarn("Notification permission denied")
-        }
-    }
-    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
         // Handle notification click intent
         handleNotificationIntent(intent)
-        
-        // Request notification permission for Android 13+
-        requestNotificationPermission()
         
         setContent {
             DoorStepTheme {
@@ -188,58 +165,6 @@ class MainActivity : ComponentActivity() {
         }
     }
     
-    /**
-     * Request notification permission for Android 13+ (API 33+)
-     */
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            when {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED -> {
-                    logDebug("Notification permission already granted")
-                    // Refresh FCM token to ensure it's registered
-                    refreshFcmToken()
-                }
-                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) -> {
-                    // Show an explanation to the user if needed
-                    logDebug("Should show rationale for notification permission")
-                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-                else -> {
-                    // Request the permission
-                    logDebug("Requesting notification permission")
-                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }
-        } else {
-            // For Android 12 and below, permission is granted at install time
-            logDebug("Android < 13, notification permission granted by default")
-            refreshFcmToken()
-        }
-    }
-    
-    /**
-     * Refresh FCM token to ensure it's ready for push notifications
-     */
-    private fun refreshFcmToken() {
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                logWarn("Fetching FCM registration token failed", task.exception)
-                return@addOnCompleteListener
-            }
-            
-            // Get new FCM registration token
-            val token = task.result
-            logDebug("FCM token obtained in MainActivity")
-            
-            // Store token for later sync with backend
-            SecureUserStore.setFcmToken(this, token)
-            SecureUserStore.setFcmNeedsSync(this, true)
-        }
-    }
-
     private fun logDebug(message: String) {
         if (BuildConfig.DEBUG) {
             Log.d(TAG, message)

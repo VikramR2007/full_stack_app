@@ -11,9 +11,7 @@ import {
   apiRequest,
   queryClient,
   resetCsrfTokenCache,
-  getCsrfToken,
 } from "../lib/queryClient";
-import { unregisterPushToken } from "@/lib/push-notifications";
 import { useToast } from "@/hooks/use-toast";
 
 type PublicUser = Omit<SelectUser, "password" | "pin">;
@@ -38,28 +36,6 @@ export const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
-
-  React.useEffect(() => {
-    let isMounted = true;
-    void getCsrfToken().catch((error: unknown) => {
-      if (!isMounted) {
-        return;
-      }
-      console.error("Failed to prefetch CSRF token:", error);
-      toast({
-        title: "Security error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to initialize secure session. Please refresh and try again.",
-        variant: "destructive",
-      });
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [toast]);
 
   const {
     data: user,
@@ -172,7 +148,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      await unregisterPushToken();
       await apiRequest("POST", "/api/logout");
     },
     onSuccess: () => {

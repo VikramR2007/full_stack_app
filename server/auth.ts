@@ -49,6 +49,11 @@ import {
 } from "./utils/identity";
 import { sanitizeAndValidateSecret } from "./security/secretValidators";
 import { getCache, setCache } from "./services/cache.service";
+import {
+  getLocalAuthUser,
+  matchesLocalSecret,
+  type LocalAuthUser,
+} from "./services/local-auth";
 dotenv.config();
 
 declare module "express-session" {
@@ -158,6 +163,55 @@ async function comparePasswords(
   }
 }
 
+async function provisionLocalAuthUser(configuredUser: LocalAuthUser) {
+  const normalizedPhone = normalizePhone(configuredUser.phone);
+  if (!normalizedPhone) {
+    throw new Error("Local auth configuration contains an invalid phone number");
+  }
+
+  const existingUser = await storage.getUserByPhone(normalizedPhone);
+  if (existingUser) {
+    if (
+      existingUser.verificationStatus !== "verified" ||
+      !existingUser.isPhoneVerified
+    ) {
+      return storage.updateUser(existingUser.id, {
+        isPhoneVerified: true,
+        verificationStatus: "verified",
+      });
+    }
+    return existingUser;
+  }
+
+  const user = await storage.createUser({
+    username: `local_${normalizedPhone}`,
+    password: await hashPasswordInternal(configuredUser.password),
+    pin: configuredUser.pin
+      ? await hashPasswordInternal(configuredUser.pin)
+      : undefined,
+    phone: normalizedPhone,
+    name: configuredUser.name,
+    role: configuredUser.role,
+    language: configuredUser.language,
+    isPhoneVerified: true,
+    verificationStatus: "verified",
+    emailVerified: false,
+    averageRating: "0",
+    totalReviews: 0,
+  });
+
+  if (configuredUser.role === "shop") {
+    await db.primary.insert(shops).values({
+      ownerId: user.id,
+      shopName: `${configuredUser.name}'s Shop`,
+    });
+  } else if (configuredUser.role === "provider") {
+    await db.primary.insert(providers).values({ userId: user.id });
+  }
+
+  return user;
+}
+
 export function initializeAuth(app: Express) {
   // Initialize Firebase Admin SDK for server-side token verification
   const firebaseInitialized = initializeFirebaseAdmin();
@@ -165,8 +219,9 @@ export function initializeAuth(app: Express) {
     logger.info("Firebase Admin SDK initialized for OTP verification");
   } else {
     logger.warn(
-      "Firebase Admin SDK not initialized. Registration and PIN reset will require " +
-      "FIREBASE_SERVICE_ACCOUNT_PATH environment variable to be set."
+      process.env.DISABLE_FIREBASE?.toLowerCase() === "true"
+        ? "Firebase is disabled. Use local auth; legacy Firebase registration and PIN reset are unavailable."
+        : "Firebase Admin SDK not initialized. Legacy Firebase registration and PIN reset are unavailable.",
     );
   }
 
@@ -322,6 +377,59 @@ export function initializeAuth(app: Express) {
 }
 
 export function registerAuthRoutes(app: Express) {
+  const localLoginSchema = z
+    .object({
+      phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
+      password: z.string().min(1).optional(),
+      otp: z.string().regex(/^\d{6}$/).optional(),
+    })
+    .refine((data) => Boolean(data.password) !== Boolean(data.otp), {
+      message: "Provide either a password or OTP",
+    });
+
+  /**
+   * Local, file-configured sign-in. This avoids Firebase completely and is
+   * enabled by config/local-auth.json in development, or with explicit
+   * LOCAL_AUTH_ENABLED=true in production.
+   */
+  app.post("/api/auth/local/login", loginLimiter, async (req, res, next) => {
+    const parsed = localLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Enter a valid phone number and password or OTP" });
+    }
+
+    const configuredUser = getLocalAuthUser(parsed.data.phone);
+    const suppliedSecret = parsed.data.password ?? parsed.data.otp ?? "";
+    const expectedSecret = parsed.data.password
+      ? configuredUser?.password
+      : configuredUser?.otp;
+
+    if (!configuredUser || !expectedSecret || !matchesLocalSecret(expectedSecret, suppliedSecret)) {
+      return res.status(401).json({ message: "Invalid mobile number or sign-in secret" });
+    }
+
+    try {
+      const user = await provisionLocalAuthUser(configuredUser);
+
+      if (user.isSuspended) {
+        return res.status(403).json({ message: "Account suspended" });
+      }
+
+      const safeUser = sanitizeUser(user);
+      if (!safeUser) {
+        return res.status(500).json({ message: "Unable to complete login" });
+      }
+
+      return req.login(safeUser as Express.User, (error) => {
+        if (error) return next(error);
+        return res.status(200).json(safeUser);
+      });
+    } catch (error) {
+      logger.error({ err: error }, "Local auth login failed");
+      return res.status(500).json({ message: "Unable to sign in with local auth" });
+    }
+  });
+
   app.post("/api/register", registerLimiter, async (req, res, next) => {
     const parsedBody = registrationSchema.safeParse(req.body);
     if (!parsedBody.success) {
@@ -496,12 +604,20 @@ export function registerAuthRoutes(app: Express) {
     }
 
     try {
+      const configuredUser = getLocalAuthUser(normalizedPhone);
       const user = await storage.getUserByPhone(normalizedPhone);
       if (user) {
         return res.json({
           exists: true,
           name: user.name,
           isPhoneVerified: user.isPhoneVerified,
+        });
+      }
+      if (configuredUser) {
+        return res.json({
+          exists: true,
+          name: configuredUser.name,
+          isPhoneVerified: true,
         });
       }
       return res.json({ exists: false });
@@ -620,7 +736,16 @@ export function registerAuthRoutes(app: Express) {
     }
 
     try {
-      const user = await storage.getUserByPhone(normalizedPhone);
+      let user = await storage.getUserByPhone(normalizedPhone);
+      if (!user) {
+        const configuredUser = getLocalAuthUser(normalizedPhone);
+        if (
+          configuredUser?.pin &&
+          matchesLocalSecret(configuredUser.pin, pin)
+        ) {
+          user = await provisionLocalAuthUser(configuredUser);
+        }
+      }
       if (!user) {
         return res.status(401).json({ message: "User not found" });
       }

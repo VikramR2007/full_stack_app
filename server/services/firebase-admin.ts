@@ -31,6 +31,11 @@ export function initializeFirebaseAdmin(): boolean {
         return true; // Already initialized
     }
 
+    if (isTruthyEnv(process.env.DISABLE_FIREBASE)) {
+        logger.info("Firebase Admin SDK disabled by DISABLE_FIREBASE");
+        return false;
+    }
+
     const isTestEnv = (process.env.NODE_ENV ?? "").toLowerCase() === "test";
     const enableInTests = isTruthyEnv(process.env.ENABLE_FIREBASE_ADMIN_IN_TEST);
     if (isTestEnv && !enableInTests) {

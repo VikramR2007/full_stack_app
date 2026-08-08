@@ -6,7 +6,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt.android)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.google.services)
 }
 
 val apiCertPins = (project.findProperty("API_CERT_PINS") as String?)
@@ -246,14 +245,8 @@ dependencies {
     // Image Loading
     implementation(libs.coil.compose)
 
-    // Firebase
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.auth.ktx)
-    implementation(libs.firebase.messaging.ktx)
-
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.kotlinx.coroutines.play.services)
     
     // Play Services Location (for GPS)
     implementation(libs.play.services.location)

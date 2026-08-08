@@ -15,6 +15,7 @@ import type { LogCategory } from "@shared/logging";
 import {
   initializeAuth,
   registerAuthRoutes,
+  hashPasswordInternal,
 } from "./auth";
 import { storage } from "./storage";
 import { sanitizeUser } from "./security/sanitizeUser";
@@ -1333,10 +1334,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         next();
       })
       : createCsrfProtection({
-        ignoreMethods: ["GET", "HEAD", "OPTIONS", "PROPFIND"],
-        // Exempt analytics endpoint - sendBeacon doesn't preserve session cookies for CSRF
-        ignorePaths: ["/api/performance-metrics"],
-      });
+          ignoreMethods: ["GET", "HEAD", "OPTIONS", "PROPFIND"],
+          // Exempt analytics endpoint - sendBeacon doesn't preserve session cookies for CSRF
+          // Also exempt dev auth route when enabled so local dev can create sessions without Firebase.
+          ignorePaths: [
+            "/api/performance-metrics",
+            "/api/dev/login",
+            // Local sign-in creates a new session, so it must not depend on a
+            // token from the previous anonymous session.
+            "/api/auth/local/login",
+          ],
+        });
 
   app.use(csrfProtection);
   registerAuthRoutes(app);
@@ -1471,6 +1479,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/csrf-token", (req, res) => {
     res.status(200).json({ csrfToken: req.csrfToken() });
+  });
+
+  // Development helper: create or fetch a test user and establish a session.
+  // Only enabled when ENABLE_DEV_AUTH=true and not in production.
+  app.post("/api/dev/login", async (req, res) => {
+    if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+      return res.status(404).json({ message: "Not found" });
+    }
+    // Allow in local development by default; keep disabled in production.
+    if ((process.env.NODE_ENV ?? "").toLowerCase() !== "development") {
+      // If not in development, require explicit opt-in via ENABLE_DEV_AUTH
+      if ((process.env.ENABLE_DEV_AUTH ?? "").toLowerCase() !== "true") {
+        return res.status(403).json({ message: "Dev auth disabled" });
+      }
+    }
+
+    const body = req.body as Record<string, unknown> | undefined;
+    const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
+    const pin = typeof body?.pin === "string" ? body.pin.trim() : "0000";
+    const name = typeof body?.name === "string" ? body.name.trim() : "Dev User";
+
+    if (!phone) {
+      return res.status(400).json({ message: "phone is required" });
+    }
+
+    try {
+      let user = await storage.getUserByPhone(phone);
+      if (!user) {
+        const username = `dev${phone.replace(/\D/g, "").slice(-10)}`;
+        const passwordHash = await hashPasswordInternal(pin || "0000");
+        const userToCreate = {
+          username,
+          password: passwordHash,
+          pin: pin || "0000",
+          role: "customer",
+          name,
+          phone,
+          isPhoneVerified: true,
+        } as any;
+
+        user = await storage.createUser(userToCreate);
+      }
+
+      // Establish session via passport
+      (req as any).login(user, (err: unknown) => {
+        if (err) {
+          logger.error({ err }, "Dev login: failed to establish session");
+          return res.status(500).json({ message: "Failed to log in" });
+        }
+        const safe = sanitizeUser(user as any);
+        return res.status(200).json(safe);
+      });
+    } catch (err) {
+      logger.error({ err }, "Dev login error");
+      return res.status(500).json({ message: "Server error" });
+    }
   });
 
 
