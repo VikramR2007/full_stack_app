@@ -36,7 +36,7 @@ data class LoginPinRequest(
  */
 @JsonClass(generateAdapter = true)
 data class RuralRegisterRequest(
-    @Json(name = "firebaseIdToken") val firebaseIdToken: String,
+    @Json(name = "phone") val phone: String,
     @Json(name = "name") val name: String,
     @Json(name = "pin") val pin: String,
     @Json(name = "initialRole") val initialRole: String,
@@ -132,6 +132,6 @@ data class CreateProviderResponse(
  */
 @JsonClass(generateAdapter = true)
 data class ResetPinRequest(
-    @Json(name = "firebaseIdToken") val firebaseIdToken: String,
+    @Json(name = "phone") val phone: String,
     @Json(name = "newPin") val newPin: String
 )

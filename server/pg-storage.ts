@@ -884,6 +884,9 @@ export class PostgresStorage implements IStorage {
       phone: normalizedPhone ?? "",
       email: normalizedEmail, // Can be null for rural users
       isPhoneVerified: user.isPhoneVerified ?? false, // Add phone verification status
+      verificationStatus: user.verificationStatus ?? "unverified",
+      isSuspended: user.isSuspended ?? false,
+      profileCompleteness: user.profileCompleteness ?? 0,
       addressStreet: user.addressStreet,
       addressLandmark: user.addressLandmark,
       addressCity: user.addressCity,

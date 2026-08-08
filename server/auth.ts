@@ -8,11 +8,6 @@ import logger from "./logger";
 import { scrypt, randomBytes, timingSafeEqual, createHash, randomInt } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
-import {
-  initializeFirebaseAdmin,
-  verifyAndExtractPhone,
-  isFirebaseAdminAvailable,
-} from "./services/firebase-admin";
 
 import {
   User as SelectUser,
@@ -51,6 +46,7 @@ import { sanitizeAndValidateSecret } from "./security/secretValidators";
 import { getCache, setCache } from "./services/cache.service";
 import {
   getLocalAuthUser,
+  isLocalAuthEnabled,
   matchesLocalSecret,
   type LocalAuthUser,
 } from "./services/local-auth";
@@ -171,24 +167,34 @@ async function provisionLocalAuthUser(configuredUser: LocalAuthUser) {
 
   const existingUser = await storage.getUserByPhone(normalizedPhone);
   if (existingUser) {
+    const updates: Partial<SelectUser> = {
+      isPhoneVerified: true,
+      verificationStatus: "verified",
+    };
+
+    // The local config is the source of truth for the dummy PIN. This also
+    // upgrades users created by the old password-based demo flow.
+    if (
+      !existingUser.pin ||
+      !(await comparePasswords(configuredUser.pin, existingUser.pin))
+    ) {
+      updates.pin = await hashPasswordInternal(configuredUser.pin);
+    }
+
     if (
       existingUser.verificationStatus !== "verified" ||
-      !existingUser.isPhoneVerified
+      !existingUser.isPhoneVerified ||
+      updates.pin
     ) {
-      return storage.updateUser(existingUser.id, {
-        isPhoneVerified: true,
-        verificationStatus: "verified",
-      });
+      return storage.updateUser(existingUser.id, updates);
     }
     return existingUser;
   }
 
   const user = await storage.createUser({
     username: `local_${normalizedPhone}`,
-    password: await hashPasswordInternal(configuredUser.password),
-    pin: configuredUser.pin
-      ? await hashPasswordInternal(configuredUser.pin)
-      : undefined,
+    password: null,
+    pin: await hashPasswordInternal(configuredUser.pin),
     phone: normalizedPhone,
     name: configuredUser.name,
     role: configuredUser.role,
@@ -213,17 +219,11 @@ async function provisionLocalAuthUser(configuredUser: LocalAuthUser) {
 }
 
 export function initializeAuth(app: Express) {
-  // Initialize Firebase Admin SDK for server-side token verification
-  const firebaseInitialized = initializeFirebaseAdmin();
-  if (firebaseInitialized) {
-    logger.info("Firebase Admin SDK initialized for OTP verification");
-  } else {
-    logger.warn(
-      process.env.DISABLE_FIREBASE?.toLowerCase() === "true"
-        ? "Firebase is disabled. Use local auth; legacy Firebase registration and PIN reset are unavailable."
-        : "Firebase Admin SDK not initialized. Legacy Firebase registration and PIN reset are unavailable.",
-    );
-  }
+  logger.info(
+    isLocalAuthEnabled()
+      ? "PIN-only local authentication is enabled"
+      : "PIN-only local authentication is disabled",
+  );
 
   const sessionSecret = sanitizeAndValidateSecret(
     "SESSION_SECRET",
@@ -377,42 +377,46 @@ export function initializeAuth(app: Express) {
 }
 
 export function registerAuthRoutes(app: Express) {
-  const localLoginSchema = z
-    .object({
-      phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
-      password: z.string().min(1).optional(),
-      otp: z.string().regex(/^\d{6}$/).optional(),
-    })
-    .refine((data) => Boolean(data.password) !== Boolean(data.otp), {
-      message: "Provide either a password or OTP",
-    });
+  const localLoginSchema = pinLoginSchema;
 
-  /**
-   * Local, file-configured sign-in. This avoids Firebase completely and is
-   * enabled by config/local-auth.json in development, or with explicit
-   * LOCAL_AUTH_ENABLED=true in production.
-   */
-  app.post("/api/auth/local/login", loginLimiter, async (req, res, next) => {
-    const parsed = localLoginSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Enter a valid phone number and password or OTP" });
-    }
-
-    const configuredUser = getLocalAuthUser(parsed.data.phone);
-    const suppliedSecret = parsed.data.password ?? parsed.data.otp ?? "";
-    const expectedSecret = parsed.data.password
-      ? configuredUser?.password
-      : configuredUser?.otp;
-
-    if (!configuredUser || !expectedSecret || !matchesLocalSecret(expectedSecret, suppliedSecret)) {
-      return res.status(401).json({ message: "Invalid mobile number or sign-in secret" });
+  const loginWithPin = async (
+    req: any,
+    res: any,
+    next: any,
+    phone: string,
+    pin: string,
+  ) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({ message: "Invalid phone format" });
     }
 
     try {
-      const user = await provisionLocalAuthUser(configuredUser);
+      const configuredUser = getLocalAuthUser(normalizedPhone);
+      let user: SelectUser | undefined;
 
+      if (configuredUser) {
+        if (matchesLocalSecret(configuredUser.pin, pin)) {
+          user = await provisionLocalAuthUser(configuredUser);
+        }
+      } else {
+        user = await storage.getUserByPhone(normalizedPhone);
+        if (user?.pin && !(await comparePasswords(pin, user.pin))) {
+          user = undefined;
+        }
+      }
+
+      if (!user) {
+        return res.status(401).json({ message: "Invalid mobile number or PIN" });
+      }
       if (user.isSuspended) {
         return res.status(403).json({ message: "Account suspended" });
+      }
+      if (!user.pin) {
+        return res.status(400).json({
+          message: "PIN not set. Configure a four-digit PIN before signing in.",
+          needsPinReset: true,
+        });
       }
 
       const safeUser = sanitizeUser(user);
@@ -420,14 +424,26 @@ export function registerAuthRoutes(app: Express) {
         return res.status(500).json({ message: "Unable to complete login" });
       }
 
-      return req.login(safeUser as Express.User, (error) => {
+      return req.login(safeUser as Express.User, (error: unknown) => {
         if (error) return next(error);
         return res.status(200).json(safeUser);
       });
     } catch (error) {
-      logger.error({ err: error }, "Local auth login failed");
-      return res.status(500).json({ message: "Unable to sign in with local auth" });
+      logger.error({ err: error }, "PIN login failed");
+      return res.status(500).json({ message: "Unable to sign in with PIN" });
     }
+  };
+
+  /**
+   * Local, file-configured sign-in. This uses only a phone number and the
+   * four-digit PIN from config/local-auth.json.
+   */
+  app.post("/api/auth/local/login", loginLimiter, async (req, res, next) => {
+    const parsed = localLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Enter a valid phone number and four-digit PIN" });
+    }
+    return loginWithPin(req, res, next, parsed.data.phone, parsed.data.pin);
   });
 
   app.post("/api/register", registerLimiter, async (req, res, next) => {
@@ -582,8 +598,7 @@ export function registerAuthRoutes(app: Express) {
   });
 
   // =====================================================
-  // RURAL-FIRST AUTH ROUTES (Mobile + OTP + PIN)
-  // These routes minimize SMS costs by using PIN for returning users
+  // PIN-FIRST AUTH ROUTES (Mobile + PIN)
   // =====================================================
 
   // Check if a phone number exists in the system
@@ -627,8 +642,7 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  // Rural Registration: Phone + Name + PIN (after OTP verification via Firebase)
-  // SECURITY: Phone number is now extracted from verified Firebase ID token, not from request body
+  // Local registration: Phone + Name + PIN
   app.post("/api/auth/rural-register", registerLimiter, async (req, res, next) => {
     const parsed = ruralRegisterSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -638,30 +652,15 @@ export function registerAuthRoutes(app: Express) {
       });
     }
 
-    const { firebaseIdToken, name, pin, initialRole, language } = parsed.data;
-
-    // SECURITY FIX: Verify Firebase ID token and extract phone number server-side
-    if (!isFirebaseAdminAvailable()) {
-      logger.error("Firebase Admin not available - cannot verify OTP");
-      return res.status(503).json({
-        message: "Phone verification service unavailable. Please try again later.",
-      });
+    if (!isLocalAuthEnabled()) {
+      return res.status(404).json({ message: "PIN registration is disabled" });
     }
 
-    const verificationResult = await verifyAndExtractPhone(firebaseIdToken);
-    if (!verificationResult.success || !verificationResult.phone) {
-      logger.warn({ error: verificationResult.error }, "Firebase token verification failed");
-      return res.status(401).json({
-        message: verificationResult.error || "Phone verification failed. Please try again.",
-      });
-    }
-
-    const normalizedPhone = normalizePhone(verificationResult.phone);
+    const { phone, name, pin, initialRole, language } = parsed.data;
+    const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
-      return res.status(400).json({ message: "Invalid phone format from verification" });
+      return res.status(400).json({ message: "Invalid phone format" });
     }
-
-    logger.info({ phone: normalizedPhone }, "Firebase token verified, proceeding with registration");
 
     try {
       // Check if phone already exists
@@ -683,7 +682,7 @@ export function registerAuthRoutes(app: Express) {
         pin: hashedPin,
         role: initialRole ?? "customer",
         language: language ?? "ta",
-        isPhoneVerified: true, // Now actually verified via Firebase
+        isPhoneVerified: true,
         emailVerified: false,
         averageRating: "0",
         totalReviews: 0,
@@ -718,7 +717,7 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  // PIN Login: Phone + PIN (no SMS cost!)
+  // PIN Login: Phone + PIN
   app.post("/api/auth/login-pin", loginLimiter, async (req, res, next) => {
     const parsed = pinLoginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -728,62 +727,12 @@ export function registerAuthRoutes(app: Express) {
       });
     }
 
-    const { phone, pin } = parsed.data;
-    const normalizedPhone = normalizePhone(phone);
-
-    if (!normalizedPhone) {
-      return res.status(400).json({ message: "Invalid phone format" });
-    }
-
-    try {
-      let user = await storage.getUserByPhone(normalizedPhone);
-      if (!user) {
-        const configuredUser = getLocalAuthUser(normalizedPhone);
-        if (
-          configuredUser?.pin &&
-          matchesLocalSecret(configuredUser.pin, pin)
-        ) {
-          user = await provisionLocalAuthUser(configuredUser);
-        }
-      }
-      if (!user) {
-        return res.status(401).json({ message: "User not found" });
-      }
-
-      if (user.isSuspended) {
-        return res.status(403).json({ message: "Account suspended" });
-      }
-
-      if (!user.pin) {
-        return res.status(400).json({
-          message: "PIN not set. Please reset your PIN.",
-          needsPinReset: true,
-        });
-      }
-
-      // Compare PIN using timing-safe comparison
-      const isPinValid = await comparePasswords(pin, user.pin);
-      if (!isPinValid) {
-        return res.status(401).json({ message: "Invalid PIN" });
-      }
-
-      const safeUser = sanitizeUser(user);
-      if (!safeUser) {
-        return res.status(500).json({ message: "Login failed" });
-      }
-
-      req.login(safeUser as Express.User, (err) => {
-        if (err) return next(err);
-        return res.status(200).json(safeUser);
-      });
-    } catch (error) {
-      logger.error({ err: error }, "PIN login failed");
-      return res.status(500).json({ message: "Login failed" });
-    }
+    return loginWithPin(req, res, next, parsed.data.phone, parsed.data.pin);
   });
 
-  // Reset PIN (after OTP verification via Firebase)
-  // SECURITY: Phone number is now extracted from verified Firebase ID token
+  // PIN changes are configuration changes for this private/demo auth mode.
+  // Do not expose an unauthenticated reset endpoint that could be used to
+  // overwrite a user's stored PIN; edit config/local-auth.json and restart.
   app.post("/api/auth/reset-pin", loginLimiter, async (req, res) => {
     const parsed = resetPinSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -793,50 +742,25 @@ export function registerAuthRoutes(app: Express) {
       });
     }
 
-    const { firebaseIdToken, newPin } = parsed.data;
-
-    // SECURITY FIX: Verify Firebase ID token and extract phone number server-side
-    if (!isFirebaseAdminAvailable()) {
-      logger.error("Firebase Admin not available - cannot verify OTP for PIN reset");
-      return res.status(503).json({
-        message: "Phone verification service unavailable. Please try again later.",
-      });
+    if (!isLocalAuthEnabled()) {
+      return res.status(404).json({ message: "PIN reset is disabled" });
     }
 
-    const verificationResult = await verifyAndExtractPhone(firebaseIdToken);
-    if (!verificationResult.success || !verificationResult.phone) {
-      logger.warn({ error: verificationResult.error }, "Firebase token verification failed for PIN reset");
-      return res.status(401).json({
-        message: verificationResult.error || "Phone verification failed. Please try again.",
-      });
-    }
-
-    const normalizedPhone = normalizePhone(verificationResult.phone);
+    const { phone } = parsed.data;
+    const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
-      return res.status(400).json({ message: "Invalid phone format from verification" });
+      return res.status(400).json({ message: "Invalid phone format" });
+    }
+    if (!req.isAuthenticated() || !req.user) {
+      return res.status(401).json({ message: "Sign in before changing your PIN" });
+    }
+    if (normalizePhone(req.user.phone ?? "") !== normalizedPhone) {
+      return res.status(403).json({ message: "You can only change your own PIN" });
     }
 
-    logger.info({ phone: normalizedPhone }, "Firebase token verified, proceeding with PIN reset");
-
-    try {
-      const user = await storage.getUserByPhone(normalizedPhone);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Hash the new PIN
-      const hashedPin = await hashPasswordInternal(newPin);
-
-      await storage.updateUser(user.id, {
-        pin: hashedPin,
-        isPhoneVerified: true,
-      });
-
-      return res.json({ success: true, message: "PIN reset successfully" });
-    } catch (error) {
-      logger.error({ err: error }, "PIN reset failed");
-      return res.status(500).json({ message: "Failed to reset PIN" });
-    }
+    return res.status(409).json({
+      message: "PIN changes are managed by config/local-auth.json. Restart the server after editing it.",
+    });
   });
 
   // =====================================================

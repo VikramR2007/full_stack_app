@@ -7,9 +7,7 @@ import { normalizePhone } from "../utils/identity";
 
 const localAuthUserSchema = z.object({
   phone: z.string().regex(/^\d{10}$/, "Phone must be a 10 digit number"),
-  password: z.string().min(8, "Password must contain at least 8 characters"),
-  otp: z.string().regex(/^\d{6}$/, "OTP must be a 6 digit number").optional(),
-  pin: z.string().regex(/^\d{4}$/).optional(),
+  pin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits"),
   name: z.string().trim().min(1).max(100).default("Local User"),
   role: z.enum(["customer", "provider", "shop"]).default("customer"),
   language: z.string().trim().max(10).default("en"),
@@ -22,6 +20,14 @@ const localAuthConfigSchema = z.object({
 
 export type LocalAuthUser = z.infer<typeof localAuthUserSchema>;
 
+export function isLocalAuthEnabled(): boolean {
+  const configured = process.env.LOCAL_AUTH_ENABLED?.trim().toLowerCase();
+  const isProduction = process.env.NODE_ENV?.toLowerCase() === "production";
+
+  if (configured === "false") return false;
+  return !isProduction || configured === "true";
+}
+
 function configPath(): string {
   return path.resolve(
     process.env.LOCAL_AUTH_CONFIG_PATH?.trim() || "config/local-auth.json",
@@ -29,20 +35,14 @@ function configPath(): string {
 }
 
 /**
- * Local auth is intentionally opt-in. It is intended for development, demos and
- * private deployments where the operator owns the credential file.
+ * Local auth is enabled by default for development and must be explicitly
+ * enabled in production. It is intended for demos and private deployments
+ * where the operator owns the credential file.
  */
 export function getLocalAuthUser(phone: string): LocalAuthUser | undefined {
-  const enabledByEnvironment = process.env.LOCAL_AUTH_ENABLED?.toLowerCase();
-  const isProduction = process.env.NODE_ENV?.toLowerCase() === "production";
   // A local config is enough while developing. Production requires an explicit
   // opt-in so a copied demo file can never accidentally open a live server.
-  if (
-    enabledByEnvironment === "false" ||
-    (isProduction && enabledByEnvironment !== "true")
-  ) {
-    return undefined;
-  }
+  if (!isLocalAuthEnabled()) return undefined;
 
   try {
     const rawConfig = fs.readFileSync(configPath(), "utf8");

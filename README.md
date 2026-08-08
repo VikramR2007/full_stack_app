@@ -323,10 +323,9 @@ Logging/monitoring:
 - `READINESS_TIMEOUT_MS`
 - `SHUTDOWN_TIMEOUT_MS`
 
-Firebase server-side:
-- `FIREBASE_SERVICE_ACCOUNT_PATH`
-- `ALLOW_MOCK_FIREBASE_TOKENS` (test/dev only)
-- `ENABLE_FIREBASE_ADMIN_IN_TEST`
+Local authentication:
+- `LOCAL_AUTH_ENABLED`
+- `LOCAL_AUTH_CONFIG_PATH`
 
 Frontend build/runtime:
 - `VITE_API_URL`
@@ -334,25 +333,18 @@ Frontend build/runtime:
 - `VITE_FALLBACK_API_URL`
 - `VITE_ENABLE_DEBUG_LOGS`
 - `VITE_ENABLE_PERMISSION_DEBUG`
-- `VITE_FIREBASE_API_KEY`
-- `VITE_FIREBASE_AUTH_DOMAIN`
-- `VITE_FIREBASE_PROJECT_ID`
-- `VITE_FIREBASE_STORAGE_BUCKET`
-- `VITE_FIREBASE_MESSAGING_SENDER_ID`
-- `VITE_FIREBASE_APP_ID`
-- `VITE_FIREBASE_VAPID_KEY`
 
 ## 9. Authentication, Sessions, and CSRF
 
 ### Local authentication without Firebase
 
 For local development or a private demo, copy `config/local-auth.example.json`
-to `config/local-auth.json` and set the mobile number, password, optional
-six-digit OTP, and optional four-digit Android PIN there. The real file is ignored by Git. Restart the server after
-changing it. The login screen uses this file and creates the matching app user
-on its first successful sign-in; Firebase, Google sign-in, reCAPTCHA, and SMS
-are not used. Android uses the optional `pin` from the same entry. In
-production, also set `LOCAL_AUTH_ENABLED=true` explicitly.
+to `config/local-auth.json` and set the mobile number and four-digit PIN there.
+The real file is ignored by Git. Restart the server after changing it. The
+login screen uses only phone + PIN and creates or upgrades the matching app
+user on its first successful sign-in. No password, Firebase, Google sign-in,
+reCAPTCHA, SMS, or OTP is required. In production, also set
+`LOCAL_AUTH_ENABLED=true` explicitly only for a private demo deployment.
 
 - API uses cookie sessions.
 - For state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`), include `x-csrf-token`.
@@ -362,13 +354,21 @@ production, also set `LOCAL_AUTH_ENABLED=true` explicitly.
 Quick manual flow:
 
 ```bash
-CSRF=$(curl -s -c cookies.txt http://localhost:5000/api/csrf-token | jq -r .csrfToken)
+CSRF=$(curl -s -c cookies.txt -b cookies.txt http://localhost:5000/api/csrf-token | jq -r .csrfToken)
+
+curl -s -c cookies.txt -b cookies.txt \
+  -H "x-csrf-token: $CSRF" \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:5000/api/auth/login-pin \
+  -d '{"phone":"9876543210","pin":"2702"}'
+
+CSRF=$(curl -s -b cookies.txt -c cookies.txt http://localhost:5000/api/csrf-token | jq -r .csrfToken)
 
 curl -s -b cookies.txt -c cookies.txt \
   -H "x-csrf-token: $CSRF" \
   -H "Content-Type: application/json" \
-  -X POST http://localhost:5000/api/login \
-  -d '{"username":"demo","password":"StrongPassword123!"}'
+  -X POST http://localhost:5000/api/auth/check-user \
+  -d '{"phone":"9876543210"}'
 ```
 
 ## 10. Android Setup (Summary)
@@ -559,9 +559,10 @@ Before go-live, verify all:
 - Set `ALLOWED_ORIGINS` correctly.
 - Confirm `FRONTEND_URL` and `APP_BASE_URL` match real domains.
 
-4. OTP verification not working server-side
-- Set `FIREBASE_SERVICE_ACCOUNT_PATH`.
-- Ensure service account JSON exists and is readable.
+4. PIN login fails
+- Confirm `LOCAL_AUTH_ENABLED=true` for development.
+- Confirm `config/local-auth.json` contains the phone number and exactly four digits.
+- Restart the server after changing either the config or `.env`.
 
 5. Admin bootstrap fails at startup
 - Set secure non-default `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
@@ -578,7 +579,7 @@ Key toggles:
 
 ## 14. Security Notes
 
-1. Never commit `.env`, Firebase service account JSON, or keystores.
+1. Never commit `.env`, local auth credentials, service account JSON, or keystores.
 2. Keep secrets in secret manager/CI variables for production.
 3. Use strong admin credentials and rotate periodically.
 4. Use HTTPS only for production traffic.

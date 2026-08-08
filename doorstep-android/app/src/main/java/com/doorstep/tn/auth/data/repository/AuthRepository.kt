@@ -81,10 +81,10 @@ class AuthRepository @Inject constructor(
     }
     
     /**
-     * Register a new user with Firebase token
+     * Register a local phone + PIN user.
      */
     suspend fun ruralRegister(
-        firebaseIdToken: String,
+        phone: String,
         name: String,
         pin: String,
         role: String,
@@ -93,7 +93,7 @@ class AuthRepository @Inject constructor(
         return try {
             val response = api.ruralRegister(
                 RuralRegisterRequest(
-                    firebaseIdToken = firebaseIdToken,
+                    phone = phone,
                     name = name,
                     pin = pin,
                     initialRole = role,
@@ -157,17 +157,17 @@ class AuthRepository @Inject constructor(
     }
     
     /**
-     * Reset PIN using Firebase ID token
+     * Reset a configured local PIN.
      */
-    suspend fun resetPin(firebaseIdToken: String, newPin: String): Result<Unit> {
+    suspend fun resetPin(phone: String, newPin: String): Result<Unit> {
         return try {
-            val response = api.resetPin(ResetPinRequest(firebaseIdToken, newPin))
+            val response = api.resetPin(ResetPinRequest(phone, newPin))
             if (response.isSuccessful) {
                 Result.Success(Unit)
             } else {
                 val errorMessage = when (response.code()) {
-                    401 -> "Session expired. Please verify your phone again."
-                    404 -> "User not found"
+                    401 -> "Please sign in before changing your PIN."
+                    404 -> "PIN changes are managed by the app owner."
                     else -> response.message()
                 }
                 Result.Error(errorMessage, response.code())

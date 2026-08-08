@@ -1,28 +1,21 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { Loader2 } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 
-const ForgotPassword = lazy(() => import("./auth/ForgotPassword"));
-const RuralAuthFlow = lazy(() => import("./auth/RuralAuthFlow"));
+import RuralAuthFlow from "./auth/RuralAuthFlow";
 
 export default function AuthPage() {
   const {
-    loginMutation,
-    registerMutation,
     user,
     isFetching: authIsFetching,
   } = useAuth();
   const [, setLocation] = useLocation();
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [language, setLanguage] = useState<"en" | "ta">("en");
 
   const shouldRedirect =
     user &&
-    !authIsFetching &&
-    !loginMutation.isPending &&
-    !registerMutation.isPending;
+    !authIsFetching;
 
   useEffect(() => {
     if (shouldRedirect) {
@@ -32,8 +25,6 @@ export default function AuthPage() {
   }, [
     user,
     authIsFetching,
-    loginMutation.isPending,
-    registerMutation.isPending,
     setLocation,
     shouldRedirect,
   ]);
@@ -46,34 +37,5 @@ export default function AuthPage() {
     );
   }
 
-  if (showForgotPassword) {
-    return (
-      <Suspense
-        fallback={
-          <div className="min-h-screen flex items-center justify-center bg-slate-900">
-            <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-          </div>
-        }
-      >
-        <ForgotPassword
-          language={language}
-          onLanguageChange={(lang) => setLanguage(lang)}
-          onClose={() => setShowForgotPassword(false)}
-        />
-      </Suspense>
-    );
-  }
-
-  // Use the new stunning RuralAuthFlow as the default and only login
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-slate-900">
-          <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-        </div>
-      }
-    >
-      <RuralAuthFlow onForgotPassword={() => setShowForgotPassword(true)} />
-    </Suspense>
-  );
+  return <RuralAuthFlow />;
 }

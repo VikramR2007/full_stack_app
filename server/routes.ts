@@ -1335,14 +1335,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       })
       : createCsrfProtection({
           ignoreMethods: ["GET", "HEAD", "OPTIONS", "PROPFIND"],
-          // Exempt analytics endpoint - sendBeacon doesn't preserve session cookies for CSRF
-          // Also exempt dev auth route when enabled so local dev can create sessions without Firebase.
+          // Exempt analytics endpoint - sendBeacon doesn't preserve session cookies for CSRF.
+          // Session-changing auth calls use the same browser helper as other
+          // mutations, so they receive and send a token before creating a session.
           ignorePaths: [
             "/api/performance-metrics",
-            "/api/dev/login",
-            // Local sign-in creates a new session, so it must not depend on a
-            // token from the previous anonymous session.
-            "/api/auth/local/login",
           ],
         });
 
@@ -2508,6 +2505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       role: true,
       password: true,
       pin: true,
+      phone: true,
       workerNumber: true,
       googleId: true,
       isSuspended: true,
@@ -2522,21 +2520,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     })
     .partial()
     .extend({
-      phone: z.preprocess(
-        (value) => {
-          if (typeof value !== "string") return value;
-          const digitsOnly = value.replace(/\D+/g, "");
-          // Keep login/update flows aligned for Indian numbers entered as +91XXXXXXXXXX.
-          if (digitsOnly.length === 12 && digitsOnly.startsWith("91")) {
-            return digitsOnly.slice(-10);
-          }
-          return digitsOnly;
-        },
-        z
-          .string()
-          .length(10, "Phone number must be exactly 10 digits")
-          .optional(),
-      ),
       email: z.preprocess(
         (value) =>
           typeof value === "string" && value.trim().length === 0 ? null : value,
