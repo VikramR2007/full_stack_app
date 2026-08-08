@@ -335,6 +335,7 @@ Logging/monitoring:
 Local authentication:
 - `LOCAL_AUTH_ENABLED`
 - `LOCAL_AUTH_CONFIG_PATH`
+- `LOCAL_AUTH_OTP` (local development signup OTP only)
 
 Frontend build/runtime:
 - `VITE_API_URL`
@@ -349,7 +350,8 @@ Frontend build/runtime:
 ### Local authentication without Firebase
 
 `config/local-auth.json` is included with three safe demo accounts so a fresh
-clone can run immediately. Each uses PIN `2702` and has no password:
+clone can run immediately. Each uses PIN `2702` and has no password. Existing
+accounts sign in with phone + PIN; OTP is used when creating a new account:
 
 - Customer: `9876543210`
 - Provider: `9876543211`
@@ -359,10 +361,18 @@ Edit that JSON file to add or change phone numbers, PINs, names, roles, or
 languages, then restart the backend. For private credentials that must not be
 committed, copy it to `config/local-auth.local.json` and set
 `LOCAL_AUTH_CONFIG_PATH=config/local-auth.local.json`; that local override is
-ignored by Git. The login screen uses only phone + PIN and creates or upgrades
-the matching app user on its first successful sign-in. No password, Firebase,
-Google sign-in, reCAPTCHA, SMS, or OTP is required. In production, set
+ignored by Git. The sign-in screen uses only phone + PIN and creates or
+upgrades the matching app user on its first successful sign-in. New-account
+registration uses the local OTP flow below; no password, Firebase, Google
+sign-in, reCAPTCHA, or SMS provider is required. In production, set
 `LOCAL_AUTH_ENABLED=true` only for a private demo deployment.
+
+To create a new local account, open the **Create account** tab, enter a name
+and phone number, click **Get OTP**, confirm the 4-digit PIN, and choose
+Customer, Service provider, or Shop owner. Local development uses
+`LOCAL_AUTH_OTP=123456` and fills that OTP automatically; no Firebase or SMS
+provider is needed. Provider/shop profiles are created during registration and
+can be completed after the first sign-in.
 
 - API uses cookie sessions.
 - For state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`), include `x-csrf-token`.

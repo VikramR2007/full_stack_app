@@ -19,6 +19,7 @@ import {
   ruralRegisterSchema,
   pinLoginSchema,
   resetPinSchema,
+  signupOtpRequestSchema,
   forgotPasswordOtpSchema,
   verifyResetOtpSchema,
   resetPasswordSchema,
@@ -379,6 +380,17 @@ export function initializeAuth(app: Express) {
 export function registerAuthRoutes(app: Express) {
   const localLoginSchema = pinLoginSchema;
 
+  const getLocalSignupOtp = (): string | undefined => {
+    const configuredOtp = process.env.LOCAL_AUTH_OTP?.trim();
+    return configuredOtp && /^\d{6}$/.test(configuredOtp)
+      ? configuredOtp
+      : undefined;
+  };
+
+  const canUseDevelopmentOtp = () =>
+    process.env.NODE_ENV?.toLowerCase() !== "production" &&
+    isLocalAuthEnabled();
+
   const loginWithPin = async (
     req: any,
     res: any,
@@ -642,7 +654,7 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  // Local registration: Phone + Name + PIN
+  // Local registration: Phone + OTP + Name + PIN + selected role
   app.post("/api/auth/rural-register", registerLimiter, async (req, res, next) => {
     const parsed = ruralRegisterSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -656,7 +668,7 @@ export function registerAuthRoutes(app: Express) {
       return res.status(404).json({ message: "PIN registration is disabled" });
     }
 
-    const { phone, name, pin, initialRole, language } = parsed.data;
+    const { phone, name, otp, pin, initialRole, language } = parsed.data;
     const normalizedPhone = normalizePhone(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ message: "Invalid phone format" });
@@ -667,6 +679,47 @@ export function registerAuthRoutes(app: Express) {
       const existingUser = await storage.getUserByPhone(normalizedPhone);
       if (existingUser) {
         return res.status(400).json({ message: "Phone number already registered" });
+      }
+
+      if (getLocalAuthUser(normalizedPhone)) {
+        return res.status(400).json({
+          message: "This phone is already configured for local sign-in. Use the sign-in tab.",
+        });
+      }
+
+      // Local development may use a configured dummy OTP so the flow works
+      // without Firebase, SMS, or a third-party provider. Production uses an
+      // OTP stored by the request endpoint and never receives this bypass.
+      const localOtp = getLocalSignupOtp();
+      const localOtpMatches =
+        canUseDevelopmentOtp() &&
+        Boolean(localOtp) &&
+        matchesLocalSecret(localOtp!, otp);
+      let otpRecordId: number | undefined;
+
+      if (!localOtpMatches) {
+        const otpHash = createHash("sha256").update(otp).digest("hex");
+        const otpRecords = await db.primary
+          .select()
+          .from(phoneOtpTokens)
+          .where(
+            and(
+              eq(phoneOtpTokens.phone, normalizedPhone),
+              eq(phoneOtpTokens.otpHash, otpHash),
+              eq(phoneOtpTokens.purpose, "phone_verification"),
+              eq(phoneOtpTokens.isUsed, false),
+            ),
+          )
+          .limit(1);
+        const otpRecord = otpRecords[0];
+
+        if (!otpRecord) {
+          return res.status(400).json({ message: "Invalid OTP" });
+        }
+        if (otpRecord.expiresAt < new Date()) {
+          return res.status(400).json({ message: "OTP expired. Please request a new one." });
+        }
+        otpRecordId = otpRecord.id;
       }
 
       // Hash the PIN using the same scrypt method as passwords
@@ -684,6 +737,8 @@ export function registerAuthRoutes(app: Express) {
         language: language ?? "ta",
         isPhoneVerified: true,
         emailVerified: false,
+        verificationStatus: "verified",
+        profileCompleteness: 100,
         averageRating: "0",
         totalReviews: 0,
       };
@@ -700,6 +755,13 @@ export function registerAuthRoutes(app: Express) {
         await db.primary.insert(providers).values({
           userId: user.id,
         });
+      }
+
+      if (otpRecordId !== undefined) {
+        await db.primary
+          .update(phoneOtpTokens)
+          .set({ isUsed: true })
+          .where(eq(phoneOtpTokens.id, otpRecordId));
       }
 
       const safeUser = sanitizeUser(user);
@@ -841,6 +903,70 @@ export function registerAuthRoutes(app: Express) {
   function generateOtp(): string {
     return randomInt(100000, 1000000).toString();
   }
+
+  // Request an OTP for a brand-new local account. In development the code is
+  // returned in the response so local testing does not require Firebase/SMS.
+  app.post("/api/auth/request-signup-otp", loginLimiter, async (req, res) => {
+    const parsed = signupOtpRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Enter a valid 10-digit phone number",
+        errors: parsed.error.errors,
+      });
+    }
+
+    const normalizedPhone = normalizePhone(parsed.data.phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({ message: "Invalid phone format" });
+    }
+
+    try {
+      const existingUser = await storage.getUserByPhone(normalizedPhone);
+      if (existingUser || getLocalAuthUser(normalizedPhone)) {
+        return res.status(409).json({
+          message: "This phone number is already registered. Use the sign-in tab.",
+        });
+      }
+
+      await db.primary.delete(phoneOtpTokens).where(
+        and(
+          eq(phoneOtpTokens.phone, normalizedPhone),
+          eq(phoneOtpTokens.purpose, "phone_verification"),
+          eq(phoneOtpTokens.isUsed, false),
+        ),
+      );
+
+      const otp = canUseDevelopmentOtp()
+        ? getLocalSignupOtp() ?? generateOtp()
+        : generateOtp();
+      const otpHash = createHash("sha256").update(otp).digest("hex");
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await db.primary.insert(phoneOtpTokens).values({
+        phone: normalizedPhone,
+        otpHash,
+        purpose: "phone_verification",
+        expiresAt,
+      });
+
+      const response: {
+        success: true;
+        message: string;
+        developmentOtp?: string;
+      } = {
+        success: true,
+        message: "OTP generated. Enter it to finish creating your account.",
+      };
+      if (canUseDevelopmentOtp()) {
+        response.developmentOtp = otp;
+      }
+
+      return res.json(response);
+    } catch (error) {
+      logger.error({ err: error }, "Failed to create signup OTP");
+      return res.status(500).json({ message: "Failed to create signup OTP" });
+    }
+  });
 
   // Send OTP for forgot password
   app.post("/api/auth/forgot-password-otp", loginLimiter, async (req, res) => {

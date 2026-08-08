@@ -920,16 +920,24 @@ export const pinSchema = z
   .string()
   .regex(/^\d{4}$/, "PIN must be exactly 4 digits");
 
-// Schema for local phone + PIN registration
+// Schema for local phone + OTP + PIN registration
 export const ruralRegisterSchema = z.object({
   phone: phoneSchema,
   name: z.string().min(1, "Name is required").max(100, "Name too long"),
+  otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
   pin: pinSchema,
   initialRole: z.enum(["customer", "shop", "provider"]).optional().default("customer"),
   language: z.string().optional().default("ta"),
 });
 
 export type RuralRegisterData = z.infer<typeof ruralRegisterSchema>;
+
+// Request a local signup OTP before creating a new account.
+export const signupOtpRequestSchema = z.object({
+  phone: phoneSchema,
+});
+
+export type SignupOtpRequest = z.infer<typeof signupOtpRequestSchema>;
 
 // Schema for PIN login
 export const pinLoginSchema = z.object({
