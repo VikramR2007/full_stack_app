@@ -2,7 +2,7 @@
 
 This repository hosts the DoorStep TN platform backend and web app, plus deployment and Android app assets.
 
-This file is the primary source of truth for:
+This file is the primary operational source of truth for:
 
 - local setup
 - environment and account requirements
@@ -10,12 +10,24 @@ This file is the primary source of truth for:
 - deployment (systemd, PM2, Kubernetes)
 - operations and troubleshooting
 
+It is intentionally written for three audiences:
+
+1. A student or evaluator who wants to understand the complete project.
+2. A developer who needs to run, test, or extend it safely.
+3. An operator who needs to diagnose a local, LAN, Android, or production
+   deployment without guessing which URL, role, database, or session is in use.
+
 ## Documentation Set
 
 - `README.md` (this file): setup, deployment, environment, and runbook.
 - `SOFTWARE_MANUAL.md`: detailed API manual plus backend/frontend/android code map.
 - `doorstep-android/README.md`: Android build, signing, release, and store checklist.
 - `PROJECT_REPORT.md`: final-year framing, evidence, limitations, and viva plan.
+
+Documentation rule: code, migrations, and `.env_example` are authoritative for
+behaviour and configuration. Markdown explains the intended workflow and the
+reason for each boundary; it must not be used to bypass server authorization,
+CSRF, validation, ownership, or production-secret requirements.
 
 ## 1. What This Repository Contains
 
@@ -150,6 +162,12 @@ npm install
 cp .env_example .env
 ```
 
+`.env_example` is the checked-in template. `.env` is machine-specific and is
+ignored by Git; never paste a real `.env` into an issue, commit, screenshot, or
+demo recording. The application reads `.env` at runtime, while Vite also reads
+it during frontend configuration. Restart the relevant process after changing
+values.
+
 Set at least:
 
 ```env
@@ -261,15 +279,30 @@ Or start both processes with one command using the existing `.env` file:
 npm run dev:all
 ```
 
-`dev:all` detects the active non-loopback IPv4 address and prints the LAN
-frontend, API health, and admin login URLs. This makes the web app reachable
-from another device on the same network. Use `DEV_ALL_HOST=192.168.1.10 npm run
-dev:all` when the machine has multiple network interfaces or a VPN and you
-need to select a specific address. The admin entry point is always
-`/admin/login`; it still requires the configured admin credentials and server
-permissions. The printed API URL is also the `LOCAL_API_BASE_URL` value for a
-physical Android device; an Android emulator should use
-`http://10.0.2.2:<api-port>` instead.
+`dev:all` detects the active non-loopback IPv4 address each time it starts and
+prints the LAN frontend, API health, and admin login URLs. This makes the web
+app reachable from another device on the same network. It also sets the Vite
+proxy target to the local API, so a browser can keep using same-origin `/api`
+requests instead of depending on a stale hard-coded IP.
+
+Use `DEV_ALL_HOST=192.168.1.10 npm run dev:all` when the machine has multiple
+network interfaces, a VPN, Docker, or a different preferred route. The
+`DEV_ALL_HOST` override is a development convenience; it does not change the
+production domain or grant access to the API. The script binds the development
+servers to all interfaces, but only devices that can reach the host and pass
+the configured browser/network checks can connect.
+
+The printed admin entry point is always `/admin/login`; it still requires the
+configured admin credentials and server permissions. For a physical Android
+device, use the printed API address as
+`-PLOCAL_API_BASE_URL=http://<current-lan-ip>:<api-port>` when building the
+debug app. An Android emulator should use `http://10.0.2.2:<api-port>` because
+that special address means “the host computer” inside the emulator.
+
+The API port comes from `PORT` and the frontend port comes from
+`DEV_SERVER_PORT`; neither is assumed to be fixed. If an old IP appears in the
+browser or Android app, stop the old processes, run `npm run dev:all` again,
+and rebuild/reinstall the debug APK with the new address.
 
 Press `Ctrl+C` once to stop both the API and frontend.
 
@@ -413,6 +446,32 @@ Frontend build/runtime:
 - `VITE_ENABLE_DEBUG_LOGS`
 - `VITE_ENABLE_PERMISSION_DEBUG`
 
+Additional variables that are useful in specific deployments:
+
+- `SERVER_HOST`: fallback server bind host when `HOST` is not supplied.
+- `GEO_QUERY_MODE`: selects the configured geographic query implementation;
+  keep the production value aligned with the database capabilities.
+- `PUSH_NOTIFICATIONS_ENABLED`: enables the server-side push dispatch path.
+- `FIREBASE_SERVICE_ACCOUNT_PATH`: service-account file used by Firebase Admin;
+  keep it outside source control.
+- `ALLOW_MOCK_FIREBASE_TOKENS`: test-only Firebase token behaviour; never enable
+  it for a public deployment.
+- `ENABLE_FIREBASE_ADMIN_IN_TEST`: allows Firebase Admin setup in tests that
+  explicitly need it.
+- `ENABLE_DEV_AUTH`: legacy/dev authentication switch used by selected test or
+  demo environments; do not treat it as production authentication.
+- `USE_IN_MEMORY_SESSION_STORE`: test-only session storage switch.
+- `JOB_LOCK_FAIL_OPEN`: controls job-lock failure behaviour; fail-closed is the
+  safer production choice unless the operational trade-off is documented.
+- `SECURITY_FAIL_ON_FAIL`: makes security-checklist failures fail the command,
+  which is recommended in CI.
+
+The complete template, including defaults and comments, is always
+`.env_example`. A variable is not automatically safe merely because it exists
+in the template: `DISABLE_REDIS`, `DISABLE_RATE_LIMITERS`, mock Firebase flags,
+demo local authentication, and HTTP cleartext are development/test controls.
+They must be reviewed before production deployment.
+
 ## 9. Authentication, Sessions, and CSRF
 
 ### Local authentication without Firebase
@@ -467,7 +526,183 @@ curl -s -b cookies.txt -c cookies.txt \
   -d '{"phone":"9876543210"}'
 ```
 
-## 10. Android Setup (Summary)
+## 10. Location, filters, and reset behaviour
+
+Location has two different meanings in the application and they must not be
+confused:
+
+1. **Saved profile location** is persistent data stored for a user or shop.
+   It is used as an optional starting point for nearby discovery.
+2. **Active browse location** is temporary UI/query state used by Shops,
+   Services, and Products. It can come from the profile, the device GPS, or
+   manually entered coordinates.
+
+The location popover exposes four intentional actions:
+
+- **Saved location** explicitly activates the profile coordinates.
+- **Use device** requests browser/device permission and activates the current
+  device coordinates without overwriting the saved profile.
+- **Enter coordinates** activates validated latitude/longitude entered by the
+  user.
+- **Clear** removes the active location from the current browse filter. It does
+  not delete the saved profile location. The saved location remains available
+  until the user chooses it again.
+
+The shared implementation is `client/src/hooks/use-location-filter.ts`. Each
+browse page has its own radius storage key, but all three pages use the same
+state contract. A cleared filter produces an ordinary unlocated list request:
+the page removes `lat`, `lng`, and `radius` from its query and resets pagination
+so the old nearby result set cannot remain selected.
+
+The important implementation rule is that profile coordinates are synchronized
+only when the profile coordinates themselves change. If the effect also watched
+the active `location`, clicking Clear would update state, rerun the effect, and
+immediately restore the old profile coordinates. This was the cause of the
+“Clear goes back to the old location” bug.
+
+If a location still appears after clearing:
+
+1. Confirm the popover says no selected point/source.
+2. Check the browser Network panel: the next `/api/shops`, `/api/services`, or
+   `/api/products` request must not contain `lat`, `lng`, or `radius`.
+3. Hard-refresh once if an old production bundle is cached.
+4. If the profile itself was intended to be cleared, use the profile location
+   form's **Clear location** action and save it. That sends both coordinates as
+   `null`; sending only one coordinate is rejected because a half-location is
+   unsafe for distance calculations.
+
+## 11. Roles, authorization, and why a 403 can be correct
+
+The application deliberately keeps authorization on the server. Hiding a
+button in React is not a security boundary, and removing the server checks
+would let a modified browser or script alter another user's data. The normal
+request path is:
+
+```text
+session -> CSRF (for writes) -> role/profile -> ownership/worker permission
+       -> validation -> database mutation -> cache/realtime invalidation
+```
+
+The main roles are:
+
+| Role       | Normal capabilities                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| Customer   | Browse, manage cart/wishlist, place orders, book services, review completed work, manage own profile/location. |
+| Provider   | Own service listings, availability, blocked time, provider bookings, provider profile, and earnings.           |
+| Shop owner | Own shop profile, products, inventory, orders, promotions, reviews, and workers.                               |
+| Worker     | Shop operations allowed by the worker's explicit responsibilities and active shop link.                        |
+| Admin      | Platform administration, health/monitoring, user/account operations, disputes, and platform-level workflows.   |
+
+The product/service/worker fixes do not remove these boundaries. They make the
+valid flows reliable by resolving the correct shop context, accepting only
+editable fields, refreshing newly-created profiles, checking ownership, and
+returning a useful status code. A 403 should therefore be diagnosed by asking
+which check failed:
+
+- missing/invalid CSRF token: request is a browser write without the current
+  session token;
+- suspended account: the account is intentionally blocked;
+- missing shop/provider profile or verification: complete the required profile
+  workflow;
+- wrong role: use the role-specific account or switch to the correct profile;
+- missing worker responsibility/inactive link: the shop owner must update the
+  worker assignment;
+- ownership mismatch: the resource belongs to another shop/provider;
+- production CORS/origin mismatch: configure the real frontend origin.
+
+Do not “fix” a 403 by making the endpoint public or by disabling CSRF. Use the
+response body, server log request ID, current session, role, ownership, and
+permission assignment to fix the actual mismatch.
+
+## 12. Product, service, and worker mutation contracts
+
+### Product lifecycle
+
+Shop owners and workers with `products:write` can create, update, and delete
+products in their resolved shop context. Product writes accept listing fields
+such as name, description, price, MRP, stock, category, images, availability,
+SKU/barcode, dimensions, specifications, tags, order quantities, and low-stock
+threshold. The server always controls the product ID, shop ownership,
+deletion state, and timestamps. A client cannot move a product to another shop
+by posting a different `shopId`.
+
+Delete is treated as an operation with historical consequences: cart references
+are removed safely, the product is marked/deleted through the storage layer, and
+direct/detail/shop-list caches are invalidated. Existing order history must not
+be silently rewritten.
+
+### Service lifecycle
+
+Providers can create and update only their own services. Writable fields include
+description, price, duration, availability, category, images, address,
+working/break hours, buffers, booking limits, service location type, and
+availability notes/slots. `providerId`, service ID, deletion state, and server
+timestamps are assigned or checked by the API. Deleted services are not
+bookable, editable, or returned as normal public detail records.
+
+Provider-wide availability updates all of that provider's services and
+invalidates both detail and provider-list caches. Deleting a service with
+historical bookings may be refused; marking it unavailable is the safe fallback
+when history must remain intact.
+
+### Worker lifecycle
+
+Worker numbers are exactly ten digits. Creation validates the name, PIN,
+contact fields, responsibilities, and uniqueness of worker number/email/phone.
+Updates normalize contacts, reject duplicates excluding the worker being edited,
+validate PINs and responsibilities, and apply user/link changes transactionally.
+Deleting a worker revokes the shop link (`active=false`) instead of deleting the
+user row, preserving order/audit/history references. A revoked worker cannot
+authenticate into shop operations.
+
+These contracts explain why a client should send only editable fields. Extra
+identity or ownership fields are rejected rather than ignored, making bugs
+visible early and preventing accidental cross-owner mutations.
+
+## 13. Common end-to-end flows
+
+### Customer
+
+1. Get a CSRF token and session cookie.
+2. Sign in with local phone/PIN or the configured production auth flow.
+3. Select the customer profile.
+4. Browse without a location, or explicitly select saved/device/manual
+   location.
+5. Add products to a cart and create an order, or choose a service and create
+   a booking.
+6. Follow the order/booking state transitions and payment-reference workflow.
+7. Review only after the relevant completion condition.
+
+### Provider
+
+1. Sign in and select the provider profile.
+2. Complete the provider profile/verification requirements.
+3. Create a service with a non-empty description and valid price/duration.
+4. Configure availability, working hours, blocked time, and provider-wide
+   availability when required.
+5. Accept/complete bookings using the provider state transitions.
+6. Review earnings and respond to reviews.
+
+### Shop owner and worker
+
+1. Sign in and select the shop profile.
+2. Complete the shop profile and any verification requirement.
+3. Create products, update inventory, and manage orders.
+4. Add a worker with explicit responsibilities; the worker signs in using the
+   worker number/PIN.
+5. Confirm that the worker's responsibility covers the requested operation.
+6. Revoke access by deactivating the worker link when access should end.
+
+### Administrator
+
+1. Open `/admin/login`, not the normal customer/provider/shop login.
+2. Use `ADMIN_EMAIL` and `ADMIN_PASSWORD` seeded at server startup.
+3. Change the initial password and use the admin dashboard/health/monitoring
+   tools.
+4. Treat admin credentials as deployment secrets; the demo local accounts do
+   not grant admin access.
+
+## 14. Android Setup (Summary)
 
 Native Android app is under `doorstep-android/`.
 
@@ -483,9 +718,9 @@ Detailed Android instructions, release signing, Firebase setup, and Play Store p
 
 - [`doorstep-android/README.md`](doorstep-android/README.md)
 
-## 11. Deployment Guide (Detailed)
+## 15. Deployment Guide (Detailed)
 
-### 11.1 Deployment Topology Diagram
+### 15.1 Deployment Topology Diagram
 
 ```mermaid
 flowchart TD
@@ -499,7 +734,7 @@ flowchart TD
     API2 --> Redis
 ```
 
-### 11.2 Option A: Single VPS with systemd (recommended baseline)
+### 15.2 Option A: Single VPS with systemd (recommended baseline)
 
 ### Step 1: Provision server dependencies
 
@@ -576,7 +811,7 @@ Use your preferred TLS method (Certbot or Cloudflare origin cert). Ensure:
 - API is reachable via `https://<api-domain>`
 - `APP_BASE_URL` and `ALLOWED_ORIGINS` use HTTPS URLs
 
-### 11.3 Option B: PM2 runtime
+### 15.3 Option B: PM2 runtime
 
 Use included ecosystem file:
 
@@ -593,7 +828,7 @@ npx pm2 startup
 
 If you use cluster mode with PM2, keep Redis enabled for shared session/realtime behavior.
 
-### 11.4 Option C: Kubernetes
+### 15.4 Option C: Kubernetes
 
 Use provided manifest:
 
@@ -611,7 +846,7 @@ Then configure:
 - environment variables via ConfigMap/Secret
 - Ingress, TLS, autoscaling, and persistent dependencies (DB/Redis)
 
-### 11.5 Option D: Cloudflare tunnel (quick external exposure)
+### 15.5 Option D: Cloudflare tunnel (quick external exposure)
 
 Script available:
 
@@ -626,7 +861,7 @@ chmod +x scripts/start_cloudflare_tunnel.sh
 
 This builds the app, starts API, then runs `cloudflared tunnel --url http://localhost:5000`.
 
-## 12. Production Readiness Checklist
+## 16. Production Readiness Checklist
 
 Before go-live, verify all:
 
@@ -645,7 +880,7 @@ Before go-live, verify all:
 9. logs are collected and rotated
 10. backups for PostgreSQL are configured
 
-## 13. Operations and Troubleshooting
+## 17. Operations and Troubleshooting
 
 ### 13.1 Health and readiness
 
@@ -690,7 +925,7 @@ Key toggles:
 - `LOG_TO_STDOUT`
 - `LOG_FILE_PATH`
 
-## 14. Security Notes
+## 18. Security Notes
 
 1. Never commit `.env`, private local-auth overrides, service account JSON, or keystores. The tracked `config/local-auth.json` contains demo-only credentials by design; replace it or use the ignored `config/local-auth.local.json` for any real account.
 2. Keep secrets in secret manager/CI variables for production.
@@ -698,11 +933,118 @@ Key toggles:
 4. Use HTTPS only for production traffic.
 5. Keep dependencies patched and run `npm audit` in CI.
 
-## 15. API Discovery
+## 19. API Discovery
 
 - Swagger UI: `/api/docs`
 - Versioned API prefix compatibility: `/api/v1/*`
 - Legacy prefix `/api/*` still supported with deprecation headers
+
+## 20. Troubleshooting decision tree and FAQ
+
+### “The page says 403 Forbidden”
+
+First identify whether it is a browser/API security failure or a business
+authorization failure. Inspect the response JSON and server log; the status
+alone is not enough. For a write request, obtain a fresh CSRF token using the
+same cookie jar, send the token in `x-csrf-token`, and make sure the browser is
+not mixing `localhost`, `127.0.0.1`, and a LAN hostname across requests. Then
+check the logged-in role, profile, suspension state, verification state, and
+resource ownership. For a worker, check the active shop link and exact
+responsibility.
+
+### “Saving my profile returns 400 Invalid input”
+
+The endpoint validates the complete location pair and the profile schema. A
+clear operation must send both `latitude` and `longitude` as `null` (the mobile
+client may send empty strings, which the API normalizes to null). A latitude
+without a longitude, a longitude without a latitude, non-numeric values, or
+coordinates outside valid Earth ranges are rejected. Also check that the
+frontend is not sending display-only fields or an old schema after a cached
+bundle; refresh and inspect the request body.
+
+### “Clear does not clear Shops/Services/Products”
+
+The active filter and saved profile location are separate. Click **Clear** in
+the browse popover to remove only the active query. If the old location returns
+immediately, make sure the browser loaded the new bundle and confirm the next
+request has no geo parameters. If the saved profile itself should be deleted,
+clear and save it in the profile location section.
+
+### “The Android app still uses an old local IP”
+
+`npm run dev:all` detects the current LAN address at startup, but an APK embeds
+its base URL at build time. Restart the dev processes, read the newly printed
+API URL, rebuild with `-PLOCAL_API_BASE_URL=...`, and reinstall the APK. The
+emulator uses `10.0.2.2`; a physical phone uses the computer's reachable LAN
+address; Genymotion uses `10.0.3.2`. Confirm the phone and computer share a
+network and that the firewall permits the API port.
+
+### “Product/service update returns 400”
+
+Send only fields from the documented mutation contract. IDs, owner IDs,
+deletion flags, search fields, and timestamps are server-controlled and are
+intentionally rejected. For services, confirm the authenticated provider owns
+the service and the service is not deleted. For products, confirm the shop or
+worker has `products:write` and the shop profile is verified.
+
+### “A worker can log in but cannot manage something”
+
+Authentication proves who the worker is; it does not grant every shop action.
+The shop owner must assign the required responsibility and keep the worker link
+active. The worker context is resolved from the shop link, so a worker cannot
+select an arbitrary shop ID in the request body.
+
+### “The server starts but the browser cannot connect”
+
+Check `/api/health` directly, then check the frontend proxy target. With
+`npm run dev:all`, use the printed URLs and do not manually retain yesterday's
+LAN IP. With separate commands, set `PORT`, `DEV_SERVER_PORT`, and
+`API_PROXY_TARGET` consistently. In a production reverse proxy, verify the
+upstream port, `FRONTEND_URL`, `APP_BASE_URL`, `ALLOWED_ORIGINS`, cookies, and
+TLS termination.
+
+### “Readiness fails”
+
+`/api/health` is a liveness check; `/api/health/ready` checks required
+dependencies. Confirm PostgreSQL, Redis (unless intentionally disabled for a
+local test), migration state, credentials, and firewall/DNS. Do not declare a
+deployment healthy just because the process is listening.
+
+### “Migrations look inconsistent”
+
+Run `npm run db:check` before deployment. It validates journal order, duplicate
+tags, SQL files, and snapshots, and reports legacy SQL files that are retained
+as history but are not automatically applied. For an existing database whose
+schema is already present but whose Drizzle history is empty, use
+`npm run db:migrate:baseline` only after confirming the expected tables exist.
+Never use a baseline command to hide a missing schema.
+
+### “Which checks should I run before handing this project to someone?”
+
+Run the following from the repository root:
+
+```bash
+npm run db:check
+npm run check
+npm run lint
+npm test
+npm run build
+```
+
+For a release candidate also configure real services, run `npm audit
+--omit=dev --audit-level=high`, execute the Android test/debug build with JDK
+17 and Android SDK 35, verify migrations against a disposable database, and
+test the primary flows on a physical device. A local test run with in-memory
+data is evidence of code behaviour, not evidence that production credentials,
+TLS, push delivery, backups, or payment settlement are configured.
+
+### “Why are some safeguards still present when the goal is a smooth flow?”
+
+The system removes accidental friction—stale profile rehydration, incorrect
+shop context, unsafe mutation payloads, duplicate worker contacts, and broken
+cache invalidation—but keeps safeguards that protect users and data. Smooth
+UX means valid users can complete valid actions reliably; it does not mean any
+role can mutate any record or that a client can bypass CSRF and ownership.
 
 ---
 

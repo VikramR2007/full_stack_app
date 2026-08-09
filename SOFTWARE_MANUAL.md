@@ -1,24 +1,36 @@
 # DoorStep TN Software Manual
 
 This manual is for engineers inheriting the codebase. It explains:
+
 - how to run and operate the system
 - where APIs are defined
 - what each backend/frontend/android module is responsible for
-- how to safely extend features
+- how authentication, CSRF, roles, ownership, and worker permissions interact
+- how location filters, profile clearing, cache invalidation, and mutation
+  validation work
+- how to safely extend features without reintroducing 400/403/404 regressions
 
 Use together with:
+
 - `README.md` (setup/deploy quick path)
 - `doorstep-android/README.md` (native Android build/release guide)
+
+The manual describes the current implementation, not an invitation to remove
+server-side safeguards. If the UI flow is inconvenient, fix the client state,
+validation message, or authorization context; do not make a protected route
+public.
 
 ## 1. System Overview
 
 DoorStep TN is a multi-role commerce platform:
+
 - customer shopping and service booking
 - shop and worker operations
 - provider workflows
 - admin operations
 
 Main runtime pieces:
+
 - API server: `server/` (Express + TypeScript)
 - Web app: `client/src/` (React + Vite)
 - Shared contracts/schema: `shared/`
@@ -111,6 +123,11 @@ Main runtime pieces:
 - `server/utils/geo.ts`: coordinate normalization + haversine helpers.
 - `server/utils/geo-sql.ts`: PostGIS/haversine SQL helper generation.
 - `server/utils/identity.ts`: username/email/phone normalization.
+- `server/utils/location.ts`: shared profile-location write validation,
+  including the explicit two-null clear operation.
+- `server/utils/mutationSchemas.ts`: allow-listed product/service create and
+  update schemas; ownership, IDs, deletion flags, and timestamps stay server
+  controlled.
 - `server/utils/zod.ts`: standardized zod validation error response formatter.
 
 ### 2.3.7 Type declarations (`server/types/`)
@@ -138,6 +155,7 @@ npm run start
 ## 2.5 Extending Backend Safely
 
 When adding an endpoint:
+
 1. Add/adjust validation schema (zod or shared schema).
 2. Add route handler in correct module (`routes.ts` or `routes/*.ts`).
 3. Use `storage` methods; avoid raw SQL in route handlers unless needed.
@@ -145,6 +163,23 @@ When adding an endpoint:
 5. Wire cache invalidation/realtime events if data affects live views.
 6. Add/update OpenAPI comments if endpoint should appear in docs.
 7. Add tests.
+
+For a mutation, also answer these questions before implementation:
+
+1. Which user owns the record after the request, and can the request body alter
+   that owner? It must not.
+2. Does the route need a shop context? Resolve it from the authenticated shop
+   or active worker link, never from a client-supplied shop ID.
+3. Which fields are writable? Prefer an allow-list schema over accepting the
+   database insert schema wholesale.
+4. What happens to list/detail/cache/realtime consumers after the write?
+5. Can historical orders/bookings/reviews still refer to the record if it is
+   deleted? Prefer soft deletion or a safe availability state where history
+   requires it.
+6. What status code and message will distinguish missing auth, missing CSRF,
+   invalid input, missing ownership, deleted records, and server failure?
+7. Is there a contract test for the successful path and the most likely bad
+   request?
 
 ## 3. API Manual
 
@@ -355,6 +390,125 @@ PUT /api/admin/roles/:roleId/permissions
 4. For write requests include `x-csrf-token`.
 5. For admin APIs use `/api/admin/login` then `/api/admin/*` routes.
 
+## 3.6 Authorization matrix for common operations
+
+The following is the practical contract behind the route guards. Exact
+permission names are defined in `shared/schema.ts` and checked by
+`server/workerAuth.ts`.
+
+| Operation                             | Customer          | Provider             | Shop owner               | Worker                         | Admin                                                          |
+| ------------------------------------- | ----------------- | -------------------- | ------------------------ | ------------------------------ | -------------------------------------------------------------- |
+| Browse public products/services/shops | Yes               | Yes                  | Yes                      | Yes                            | Yes                                                            |
+| Create/update own service             | No                | Own provider records | No                       | No                             | Platform tools only unless an admin route explicitly allows it |
+| Create/update shop products           | No                | No                   | Own shop                 | Active link + `products:write` | Platform tools only unless an admin route explicitly allows it |
+| Manage shop orders/inventory          | No                | No                   | Own shop                 | Matching shop responsibility   | Admin routes                                                   |
+| Book a service/place an order         | Own customer flow | No                   | No                       | No                             | No                                                             |
+| Manage own profile/location           | Own profile       | Own profile          | Own profile/shop context | Own account where supported    | Admin account flow                                             |
+| Manage workers                        | No                | No                   | Own shop                 | No                             | Platform administration                                        |
+
+This table explains an important distinction: login success does not imply that
+every operation is valid. It also explains why the fix for worker product
+operations belongs in shop-context and permission resolution, rather than in a
+global “allow all” switch.
+
+## 3.7 Location contract and clear semantics
+
+`POST /api/profile/location` accepts:
+
+```json
+{
+  "latitude": 10.567,
+  "longitude": 77.273,
+  "context": "user"
+}
+```
+
+To explicitly clear the saved location, send both coordinates as `null`:
+
+```json
+{
+  "latitude": null,
+  "longitude": null,
+  "context": "user"
+}
+```
+
+The API also normalizes empty coordinate strings to null for Android clients.
+One null plus one number is rejected. This is intentional: every stored or
+queried location must be a complete pair.
+
+`context: "shop"` stores the shop's location when the authenticated account
+has the shop context; other contexts update the authenticated user's location.
+The context field remains extensible for mobile clients, but it does not let a
+client update an arbitrary user's or shop's location.
+
+On the web, `useLocationFilter` is a temporary browse state machine:
+
+```text
+profile coordinates -> initial active source: profile
+Clear                -> no active source and no geo query parameters
+Saved location       -> source: profile
+Use device           -> source: device
+Manual coordinates   -> source: manual
+```
+
+The profile-sync effect watches only the profile coordinate value. Watching the
+active `location` as well would restore profile coordinates immediately after
+Clear. Every browse page includes location values in its React Query key and
+request only when they exist, so a clear also invalidates the old result path
+through the normal query-key change.
+
+## 3.8 Safe product/service mutation contract
+
+`server/utils/mutationSchemas.ts` deliberately uses `pick(...).strict()` from
+the shared insert schemas. Product and service creation/update can accept
+editable listing fields, but cannot accept:
+
+- primary IDs;
+- `shopId` or `providerId` ownership;
+- deletion flags;
+- search/cache fields;
+- created/updated timestamps;
+- server-generated audit or relationship fields.
+
+The route supplies ownership from the session/context, normalizes categories,
+checks verification/role/ownership, writes through storage, and invalidates
+the affected cache keys. An update with no fields is rejected rather than
+silently reported as a successful no-op.
+
+Public reads and bookings exclude deleted records. A detail/update/delete
+request for an already deleted service/product returns not found, preventing a
+stale client from mutating an invisible record.
+
+## 3.9 Worker mutation and revocation contract
+
+Worker creation is shop-owner-only and validates a ten-digit worker number,
+four-digit PIN, contact normalization, unique email/phone, and a list of known
+responsibilities. Worker updates validate and normalize changed fields, exclude
+the target worker from duplicate checks, and apply user and shop-link changes
+inside one database transaction.
+
+Worker deletion is a revocation operation. The `shop_workers` link remains for
+history, but `active=false` prevents future shop operations and login access.
+This avoids foreign-key/history corruption caused by hard-deleting a user who
+is referenced by orders, audit records, or other operational history.
+
+## 3.10 Status-code diagnosis
+
+| Status | Meaning                                                                       | First place to inspect                                      |
+| ------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 400    | Body/query/parameter is invalid or a business precondition failed             | Zod schema, response `errors`, route log                    |
+| 401    | No valid session/authentication                                               | Cookie jar, login flow, session store                       |
+| 403    | CSRF, suspension, role, worker permission, verification, or ownership failure | Response `message`, `x-request-id`, auth/context middleware |
+| 404    | Resource does not exist, is deleted, or is not linked to this owner           | ID, deletion state, owner/context query                     |
+| 409    | State conflict or duplicate/transition conflict                               | Current order/booking/worker state                          |
+| 429    | Rate limit                                                                    | Auth/admin/sensitive limiter and retry policy               |
+| 500    | Unexpected server/dependency failure                                          | Structured logs, readiness, database/Redis                  |
+
+Do not interpret every 403 as a missing “guard rail”. CSRF and authorization
+are required controls. A usable fix makes the valid session/context arrive at
+the route, or makes the response explain the missing prerequisite.
+
 ## 4. Frontend Software Manual
 
 ## 4.1 Frontend Boot Flow
@@ -364,6 +518,7 @@ PUT /api/admin/roles/:roleId/permissions
 - Route-level code splitting via `React.lazy` and `Suspense`.
 
 Provider stack in `App.tsx`:
+
 1. `QueryClientProvider`
 2. `LanguageProvider`
 3. `AuthProvider`
@@ -481,10 +636,40 @@ Page files are under `client/src/pages/`.
 ## 4.4 Frontend Dev Rules
 
 When adding a new page:
+
 1. create page in correct role folder under `pages/`
 2. add route in `App.tsx`
 3. gate with `ProtectedRoute` if auth/role restricted
 4. use `queryClient`/`apiRequest` for API calls (keeps CSRF/session behavior consistent)
+
+When adding a filter or mutation:
+
+1. Keep server state in React Query and transient form/UI state local to the
+   page or hook.
+2. Include every server input that changes the result in the query key.
+3. On clear/reset, remove the input from both local state and the request
+   parameters; do not only hide the value in the UI.
+4. Invalidate the exact list/detail keys after a successful write.
+5. Keep profile data and temporary filter data separate. A saved profile
+   location is not the same thing as an active nearby search.
+6. Display the API validation message to the user, but never weaken the API
+   schema to make an accidental payload appear successful.
+
+### 4.5 Frontend/API 403 debugging checklist
+
+The shared `queryClient` obtains a CSRF token, preserves cookies, and sends the
+token for state-changing requests. A new custom `fetch` call can easily
+reintroduce 403 errors if it bypasses that helper. Before adding a custom
+client, verify:
+
+- the call uses the same origin/proxy or a configured API origin;
+- credentials/cookies are included;
+- a fresh CSRF token is available for POST/PATCH/PUT/DELETE;
+- the app has hydrated the intended role/profile;
+- the mutation sends only the fields accepted by the server;
+- a worker operation has loaded its permission context;
+- the UI invalidates/refetches after the mutation rather than showing stale
+  data.
 
 ## 5. Android Software Manual (Code Map)
 
@@ -540,6 +725,32 @@ This complements `doorstep-android/README.md`.
 - `common/localization/Translations.kt`: localization resources.
 - `common/util/*`: helper utilities.
 
+### 5.2.7 Android local API selection
+
+The debug base URL is compiled into `BuildConfig.API_BASE_URL` by
+`app/build.gradle.kts`:
+
+- emulator: `http://10.0.2.2:<PORT>`;
+- physical device: `http://<computer-lan-ip>:<PORT>` supplied with
+  `-PLOCAL_API_BASE_URL=...`;
+- Genymotion: normally `http://10.0.3.2:<PORT>`;
+- release: the configured HTTPS production URL.
+
+`npm run dev:all` discovers the current host LAN IPv4 address and prints the
+API URL. That value is a build input for a physical-device debug APK; it is
+not dynamically injected into an APK that was already installed. This explains
+why changing Wi-Fi networks requires a new debug build/reinstall.
+
+The Android `AuthInterceptor` obtains `/api/csrf-token`, keeps the session
+cookie, adds `X-CSRF-Token` to writes, and retries once for a CSRF 403. A
+repeated 403 after the retry normally indicates role/ownership/suspension or a
+server origin/session issue rather than a missing token.
+
+Profile location clearing is represented by a complete pair of empty values in
+the mobile request; the server normalizes those values to two nulls. This
+keeps Moshi/request serialization from accidentally omitting one half of the
+clear operation.
+
 ## 5.3 Android Build and Config Files
 
 - `doorstep-android/app/build.gradle.kts`: app module config, build types, release validations.
@@ -561,7 +772,13 @@ This complements `doorstep-android/README.md`.
 ### 7.1 Scripts (`scripts/`)
 
 - `runMigrations.ts`: apply Drizzle migrations.
+- `setup-local.sh`: safe local Node/PostgreSQL/Redis/bootstrap/migration setup;
+  `--reset-db` is explicit and refuses remote databases.
+- `dev-all.sh`: starts API + Vite, detects the active LAN IP, and prints web,
+  admin, API, and Android addresses.
 - `seedMigrationHistory.ts`: baseline migration history in existing DB.
+- `validateMigrationHistory.ts`: validates journal/file/snapshot structure and
+  reports legacy SQL files outside the active Drizzle journal.
 - `setupAdmin.ts`: admin bootstrap helper script.
 - `truncateAllData.ts`: destructive DB cleanup helper (dev tooling).
 - `run_load_regression.sh`: load regression runner.
@@ -603,3 +820,84 @@ find server -type f -name '*.ts' -print0 | xargs -0 perl -0777 -ne \
 3. Read this manual sections 2, 3, and 4.
 4. Open Swagger (`/api/docs`) and verify auth/CSRF flow.
 5. For mobile work, read `doorstep-android/README.md` + section 5 in this file.
+
+## 10. Change checklist for the previously fragile flows
+
+Use this checklist when reviewing changes to the flows that historically
+produced stale data, 400 responses, or 403 responses.
+
+### Profile location
+
+- [ ] UI can save a complete coordinate pair.
+- [ ] UI can explicitly clear both coordinates.
+- [ ] API accepts two nulls/normalized empty strings and rejects a half-pair.
+- [ ] User and shop contexts update only the authenticated owner context.
+- [ ] Shop cache is invalidated after a shop-location change.
+- [ ] Web and Android send the same semantic clear operation.
+
+### Browse filters
+
+- [ ] Shops, Services, and Products use the shared location hook.
+- [ ] Clear removes active coordinates/source and leaves saved location merely
+      available, not automatically active.
+- [ ] Query keys include lat/lng/radius when active.
+- [ ] Cleared requests omit all geo parameters.
+- [ ] Pagination resets when the result scope changes.
+- [ ] Radius remains clamped to the supported 5–100 km range.
+
+### Products and services
+
+- [ ] Create/update schemas are allow-listed and strict.
+- [ ] Client-supplied owner IDs are ignored/rejected.
+- [ ] Provider/shop ownership is checked after loading the record.
+- [ ] Deleted records cannot be updated, booked, or returned as public detail.
+- [ ] Affected caches are invalidated after create/update/delete.
+- [ ] Existing order/booking history is preserved.
+
+### Workers
+
+- [ ] Worker number/PIN/contact values are validated and normalized.
+- [ ] Duplicate checks exclude the worker currently being edited.
+- [ ] User/link changes are transactional.
+- [ ] Permission checks use the active shop link, not a request-body shop ID.
+- [ ] Delete/revoke deactivates access without breaking historical references.
+
+## 11. Verification commands and interpretation
+
+From the repository root:
+
+```bash
+npm run db:check
+npm run check
+npm run lint
+npm test
+npm run build
+```
+
+These commands cover migration structure, TypeScript, lint rules, automated
+tests, and the production web/API bundle. They do not prove that external SMS,
+Firebase push, TLS certificates, payment settlement, DNS, backups, or Android
+hardware behaviour are configured. Those require environment-specific checks.
+
+For an authenticated HTTP probe, preserve the cookie jar and fetch a fresh
+CSRF token before each independent session. Never print passwords, PINs,
+session cookies, bearer tokens, service-account JSON, or full `.env` contents
+to logs or bug reports.
+
+## 12. Design decisions worth preserving
+
+1. **Same-origin development proxy:** keeps browser cookies and CSRF behaviour
+   simple while `dev:all` still exposes the app over the current LAN IP.
+2. **Profile/active-location separation:** lets a user clear a search without
+   deleting their saved address and prevents accidental rehydration.
+3. **Allow-listed writes:** prevents ownership and lifecycle fields from being
+   changed by a client.
+4. **Worker revocation instead of deletion:** preserves referential integrity
+   and audit history.
+5. **Explicit migration baseline:** makes existing-schema adoption auditable
+   instead of silently pretending every historical SQL file is active.
+6. **Server-side authorization:** protects the platform even when the web or
+   Android client is modified or bypassed.
+
+Changing any of these decisions requires updates to route tests, the web and
+Android clients, this manual, `README.md`, and the project report.
