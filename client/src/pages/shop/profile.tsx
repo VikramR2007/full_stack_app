@@ -355,7 +355,8 @@ export default function ShopProfile() {
         <ProfileLocationSection
           user={user}
           initialCoordinates={
-            currentShop?.shopLocationLat && currentShop?.shopLocationLng
+            currentShop?.shopLocationLat != null &&
+            currentShop?.shopLocationLng != null
               ? {
                 latitude: Number(currentShop.shopLocationLat),
                 longitude: Number(currentShop.shopLocationLng),

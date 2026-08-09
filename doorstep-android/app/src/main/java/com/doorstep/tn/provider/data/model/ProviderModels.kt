@@ -157,7 +157,7 @@ data class ProviderStats(
 @JsonClass(generateAdapter = true)
 data class CreateServiceRequest(
     val name: String,
-    val description: String? = null,
+    val description: String,
     val category: String,
     val price: String,
     val duration: Int,

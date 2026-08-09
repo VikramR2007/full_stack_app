@@ -2,7 +2,7 @@ import React, { Suspense, lazy } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, MapPin } from "lucide-react";
+import { Loader2, MapPin, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,7 +12,10 @@ import { cn } from "@/lib/utils";
 import MapLink from "@/components/location/MapLink";
 import { useLanguage } from "@/contexts/language-context";
 import { useAppMode } from "@/contexts/UserContext";
-import { formatGeolocationError, getCurrentPositionWithFallback } from "@/lib/permissions";
+import {
+  formatGeolocationError,
+  getCurrentPositionWithFallback,
+} from "@/lib/permissions";
 
 const LazyLocationPicker = lazy(async () => {
   const module = await import("./location-picker");
@@ -66,18 +69,21 @@ export function ProfileLocationSection({
     (user?.role === "customer"
       ? t("profile_location_title_customer")
       : t("profile_location_title_provider"));
-  const resolvedDescription =
-    description ?? t("profile_location_description");
+  const resolvedDescription = description ?? t("profile_location_description");
   const userLatitude = user?.latitude;
   const userLongitude = user?.longitude;
 
   const initialLocation = useMemo(
-    () => initialCoordinates || toCoordinates(userLatitude, userLongitude),
+    () =>
+      initialCoordinates !== undefined
+        ? initialCoordinates
+        : toCoordinates(userLatitude, userLongitude),
     [userLatitude, userLongitude, initialCoordinates],
   );
 
   const [location, setLocation] = useState<Coordinates | null>(initialLocation);
-  const [isCapturingDeviceLocation, setIsCapturingDeviceLocation] = useState(false);
+  const [isCapturingDeviceLocation, setIsCapturingDeviceLocation] =
+    useState(false);
   const [isMapVisible, setIsMapVisible] = useState(false);
   const { toast } = useToast();
   const { appMode } = useAppMode();
@@ -87,15 +93,19 @@ export function ProfileLocationSection({
   }, [initialLocation]);
 
   const mutation = useMutation({
-    mutationFn: async (coords: Coordinates) => {
+    mutationFn: async (coords: Coordinates | null) => {
       const res = await apiRequest("POST", "/api/profile/location", {
-        ...coords,
-        context: appMode === "SHOP" ? "shop" : "user"
+        latitude: coords?.latitude ?? null,
+        longitude: coords?.longitude ?? null,
+        context: appMode === "SHOP" ? "shop" : "user",
       });
       return (await res.json()) as { message?: string; user: User };
     },
     onSuccess: ({ user: updatedUser, message }) => {
       queryClient.setQueryData(["/api/user"], updatedUser);
+      if (appMode === "SHOP") {
+        queryClient.invalidateQueries({ queryKey: ["/api/shops/current"] });
+      }
       toast({
         title: t("location_saved_title"),
         description: message ?? t("location_saved_description"),
@@ -143,21 +153,15 @@ export function ProfileLocationSection({
         toast({
           title: t("location_fetch_failed_title"),
           description:
-            error instanceof Error ? error.message : t("location_fetch_failed_title"),
+            error instanceof Error
+              ? error.message
+              : t("location_fetch_failed_title"),
           variant: "destructive",
         });
       });
   };
 
   const handleSave = () => {
-    if (!location) {
-      toast({
-        title: t("location_select_first_title"),
-        description: t("location_select_first_description"),
-        variant: "destructive",
-      });
-      return;
-    }
     mutation.mutate(location);
   };
 
@@ -210,11 +214,22 @@ export function ProfileLocationSection({
             ) : null}
             {t("use_current_location")}
           </Button>
+          {location ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setLocation(null)}
+              disabled={mutation.isPending || isCapturingDeviceLocation}
+            >
+              <X className="mr-2 h-4 w-4" />
+              {t("clear_location")}
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="default"
             onClick={handleSave}
-            disabled={!isDirty || mutation.isPending || !location}
+            disabled={!isDirty || mutation.isPending}
           >
             {mutation.isPending ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -251,9 +266,7 @@ export function ProfileLocationSection({
               ) : null}
             </div>
           ) : (
-            <p className="text-muted-foreground">
-              {t("location_empty_state")}
-            </p>
+            <p className="text-muted-foreground">{t("location_empty_state")}</p>
           )}
         </div>
       </CardContent>

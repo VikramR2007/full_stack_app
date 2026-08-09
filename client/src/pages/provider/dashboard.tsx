@@ -95,10 +95,10 @@ type BookingProximityInfo = {
 type ProviderBookingService =
   | Service
   | {
-    name: string;
-    price?: string | number | null;
-    category?: string | null;
-  };
+      name: string;
+      price?: string | number | null;
+      category?: string | null;
+    };
 
 type ProviderBookingCustomer = {
   id: number;
@@ -176,13 +176,17 @@ const formatRupees = (amount?: number | null): string => {
 
 const INDIAN_DAY_KEY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-const getIndianDayKey = (date: Date | string | null | undefined): string | null => {
+const getIndianDayKey = (
+  date: Date | string | null | undefined,
+): string | null => {
   if (!date) return null;
   const key = formatInIndianTime(date, "yyyy-MM-dd");
   return INDIAN_DAY_KEY_REGEX.test(key) ? key : null;
 };
 
-const getIndianMonthKey = (date: Date | string | null | undefined): string | null => {
+const getIndianMonthKey = (
+  date: Date | string | null | undefined,
+): string | null => {
   if (!date) return null;
   return formatInIndianTime(date, "yyyy-MM");
 };
@@ -218,7 +222,7 @@ const resolveServiceIcon = (
 ): React.ElementType => {
   const label = [
     service?.name ?? "",
-    "category" in (service ?? {}) ? service?.category ?? "" : "",
+    "category" in (service ?? {}) ? (service?.category ?? "") : "",
   ]
     .join(" ")
     .toLowerCase();
@@ -307,7 +311,6 @@ function PendingBookingRequestsList({
       setActionDialogOpen(false);
       setSelectedBooking(null);
       setActionComment("");
-
     },
     onError: (error: Error) => {
       toast({
@@ -348,9 +351,9 @@ function PendingBookingRequestsList({
     : null;
   const actionTimeLabel = selectedBooking?.bookingDate
     ? formatBookingTimeLabel(
-      selectedBooking.bookingDate,
-      selectedBooking.timeSlotLabel,
-    )
+        selectedBooking.bookingDate,
+        selectedBooking.timeSlotLabel,
+      )
     : null;
 
   return (
@@ -387,9 +390,9 @@ function PendingBookingRequestsList({
             : "At customer location";
         const expiresInDays = booking.expiresAt
           ? Math.ceil(
-            (new Date(booking.expiresAt).getTime() - Date.now()) /
-            (1000 * 60 * 60 * 24),
-          )
+              (new Date(booking.expiresAt).getTime() - Date.now()) /
+                (1000 * 60 * 60 * 24),
+            )
           : null;
 
         return (
@@ -403,9 +406,7 @@ function PendingBookingRequestsList({
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Where
                   </p>
-                  <p className="text-3xl font-bold sm:text-4xl">
-                    {landmark}
-                  </p>
+                  <p className="text-3xl font-bold sm:text-4xl">{landmark}</p>
                   <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4" />
                     <span>{addressLine}</span>
@@ -510,7 +511,9 @@ function PendingBookingRequestsList({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs text-muted-foreground">
                   {customerName}
-                  {booking.customer?.phone ? ` • ${booking.customer.phone}` : ""}
+                  {booking.customer?.phone
+                    ? ` • ${booking.customer.phone}`
+                    : ""}
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -823,20 +826,18 @@ export default function ProviderDashboard() {
 
   const upcomingBookings = bookings
     ? bookings
-      .filter(
-        (b) => {
+        .filter((b) => {
           if (!activeBookingStatuses.includes(b.status)) return false;
           if (!todayIndianKey) return false;
           const bookingKey = getIndianDayKey(b.bookingDate);
           return !!bookingKey && bookingKey >= todayIndianKey;
-        },
-      )
-      .sort(
-        (a, b) =>
-          new Date(a.bookingDate).getTime() -
-          new Date(b.bookingDate).getTime(),
-      )
-      .slice(0, 5)
+        })
+        .sort(
+          (a, b) =>
+            new Date(a.bookingDate).getTime() -
+            new Date(b.bookingDate).getTime(),
+        )
+        .slice(0, 5)
     : [];
 
   const earningsSummary = useMemo(() => {
@@ -951,7 +952,6 @@ export default function ProviderDashboard() {
     mutationFn: async (data: ServiceFormData) => {
       const res = await apiRequest("POST", "/api/services", {
         ...data,
-        providerId: user?.id,
       });
       if (!res.ok) {
         const err = await res.json();
@@ -1132,7 +1132,8 @@ export default function ProviderDashboard() {
                       {isWorkingToday ? "I am Working Today" : "I am Busy"}
                     </h2>
                     <p className="text-sm text-muted-foreground">
-                      One tap to pause all new requests. Applies to every service.
+                      One tap to pause all new requests. Applies to every
+                      service.
                     </p>
                   </div>
                   <div className="flex w-full flex-col gap-2 md:w-auto">
@@ -1238,7 +1239,9 @@ export default function ProviderDashboard() {
                   <Bell className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{pendingBookingsCount}</div>
+                  <div className="text-2xl font-bold">
+                    {pendingBookingsCount}
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -1515,7 +1518,8 @@ export default function ProviderDashboard() {
                                   isAvailable: service.isAvailable ?? true,
                                   isAvailableNow:
                                     service.isAvailableNow ?? true,
-                                  availabilityNote: service.availabilityNote ?? "",
+                                  availabilityNote:
+                                    service.availabilityNote ?? "",
                                 });
                                 setActiveTab("basic"); // Reset to basic tab when opening for edit
                                 setDialogOpen(true);
@@ -1586,13 +1590,13 @@ export default function ProviderDashboard() {
                             <span
                               className={
                                 service.isAvailable &&
-                                  service.isAvailableNow !== false
+                                service.isAvailableNow !== false
                                   ? "text-green-600"
                                   : "text-red-600"
                               }
                             >
                               {service.isAvailable &&
-                                service.isAvailableNow !== false
+                              service.isAvailableNow !== false
                                 ? t("status_online")
                                 : t("status_paused")}
                             </span>
@@ -1775,7 +1779,9 @@ export default function ProviderDashboard() {
                         name="availabilityNote"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t("availability_note_optional")}</FormLabel>
+                            <FormLabel>
+                              {t("availability_note_optional")}
+                            </FormLabel>
                             <FormControl>
                               <Textarea
                                 placeholder={t("availability_note_placeholder")}
@@ -1809,7 +1815,6 @@ export default function ProviderDashboard() {
             </Form>
           </DialogContent>
         </Dialog>
-
       </motion.div>
     </DashboardLayout>
   );

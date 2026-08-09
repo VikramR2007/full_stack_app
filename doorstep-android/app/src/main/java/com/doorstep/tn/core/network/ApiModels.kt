@@ -45,8 +45,8 @@ data class UpdateProfileRequest(
 // Profile Location - POST /api/profile/location (matches web app)
 @JsonClass(generateAdapter = true)
 data class UpdateProfileLocationRequest(
-    @Json(name = "latitude") val latitude: String,
-    @Json(name = "longitude") val longitude: String,
+    @Json(name = "latitude") val latitude: String? = null,
+    @Json(name = "longitude") val longitude: String? = null,
     @Json(name = "context") val context: String = "user"
 )
 

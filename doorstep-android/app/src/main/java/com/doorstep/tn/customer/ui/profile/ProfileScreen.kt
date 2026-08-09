@@ -477,6 +477,7 @@ fun ProfileScreen(
                     
                     // Show saved or captured location
                     val hasLocation = capturedLatitude != null && capturedLongitude != null
+                    val hasSavedLocation = user?.latitude != null && user?.longitude != null
                     if (hasLocation) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
@@ -539,6 +540,28 @@ fun ProfileScreen(
                         onClick = {
                             val lat = capturedLatitude
                             val lng = capturedLongitude
+                            if (lat == null && lng == null && hasSavedLocation) {
+                                isSavingLocation = true
+                                customerViewModel.updateProfileLocation(
+                                    // Empty strings are serialized by Moshi and
+                                    // normalized to an explicit clear by the API.
+                                    latitude = "",
+                                    longitude = "",
+                                    onSuccess = {
+                                        isSavingLocation = false
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Location cleared successfully!")
+                                        }
+                                    },
+                                    onError = { errorMessage ->
+                                        isSavingLocation = false
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Error: $errorMessage")
+                                        }
+                                    }
+                                )
+                                return@Button
+                            }
                             if (lat == null || lng == null) {
                                 scope.launch {
                                     snackbarHostState.showSnackbar("Capture a location before saving.")
@@ -563,7 +586,7 @@ fun ProfileScreen(
                                 }
                             )
                         },
-                        enabled = hasLocation && !isSavingLocation,
+                        enabled = (hasLocation || hasSavedLocation) && !isSavingLocation,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary)
                     ) {
@@ -578,7 +601,7 @@ fun ProfileScreen(
                         } else {
                             Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Save Location")
+                            Text(if (!hasLocation && hasSavedLocation) "Clear Location" else "Save Location")
                         }
                     }
                 }

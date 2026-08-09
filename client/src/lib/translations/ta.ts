@@ -67,8 +67,7 @@ const ta = {
   inventory_status_hint: "பொருள் முடிந்தால் மட்டும் மாற்றுங்கள்.",
   inventory_have_it: "உண்டு",
   inventory_finished: "முடிந்தது",
-  inventory_quick_add_hint:
-    "விரைவு சேர்க்கை இயல்பாக 'உண்டு' ஆக இருக்கும்.",
+  inventory_quick_add_hint: "விரைவு சேர்க்கை இயல்பாக 'உண்டு' ஆக இருக்கும்.",
   inventory_status_title: "சரக்கு நிலை",
   inventory_status_description:
     "உண்டு / முடிந்தது என்பதை பயன்படுத்துங்கள். எண்ணிக்கை விருப்பம்.",
@@ -84,7 +83,8 @@ const ta = {
   available_for_booking: "டேக்குகள்",
   shop_dashboard_title: "கடை டாஷ்போர்டு",
   shop_dashboard_welcome: "வரவேற்கிறோம், {name}",
-  shop_dashboard_subtitle: "இன்று உங்கள் கடையில் என்ன நடக்கிறது என்பதைப் பார்க்கலாம்.",
+  shop_dashboard_subtitle:
+    "இன்று உங்கள் கடையில் என்ன நடக்கிறது என்பதைப் பார்க்கலாம்.",
   total_products: "மொத்த பொருட்கள்",
   pending_orders: "நிலுவை ஆர்டர்கள்",
   orders_in_progress: "நடந்து கொண்டிருக்கும் ஆர்டர்கள்",
@@ -184,14 +184,14 @@ const ta = {
   provider_reviews_your_reply: "உங்கள் பதில்",
   provider_reviews_reply_placeholder: "உங்கள் பதிலை எழுதுங்கள்...",
   provider_reviews_reply_button: "பதில் அளிக்க",
-  provider_reviews_reply_success: "உங்கள் பதில் வெற்றிகரமாக பதிவு செய்யப்பட்டது.",
+  provider_reviews_reply_success:
+    "உங்கள் பதில் வெற்றிகரமாக பதிவு செய்யப்பட்டது.",
   provider_profile_title: "வழங்குநர் சுயவிவரம்",
   provider_profile_subtitle:
     "மேலும் முன்பதிவுகளுக்கு உங்கள் விவரங்களை புதுப்பிக்கவும்.",
   edit_profile: "சுயவிவரம் திருத்து",
   profile_overview_title: "சுயவிவர சுருக்கம்",
-  profile_overview_subtitle:
-    "உங்கள் சுயவிவர நிலையின் விரைவு சுருக்கம்.",
+  profile_overview_subtitle: "உங்கள் சுயவிவர நிலையின் விரைவு சுருக்கம்.",
   verification_status_label: "சரிபார்ப்பு நிலை",
   profile_completeness_label: "சுயவிவர நிறைவு",
   contact_information: "தொடர்பு தகவல்",
@@ -232,6 +232,7 @@ const ta = {
     "தூர அடிப்படையிலான தேடல் துல்லியமாக இருக்க உங்கள் சரியான இடத்தை அமைக்கவும்.",
   location_saved_title: "இடம் சேமிக்கப்பட்டது",
   location_saved_description: "இடம் சேமிக்கப்பட்டது.",
+  clear_location: "இடத்தை அழிக்கவும்",
   location_update_failed: "இடம் புதுப்பிப்பு தோல்வியடைந்தது",
   geolocation_unavailable_title: "GPS இல்லை",
   geolocation_unavailable_description: "உங்கள் உலாவியில் GPS இல்லை.",
@@ -271,8 +272,7 @@ const ta = {
   earnings_month: "இந்த மாதம்",
   earnings_total: "மொத்த வருமானம்",
   earnings_customers_title: "வாடிக்கையாளர் வருமானம்",
-  earnings_customers_subtitle:
-    "அதிக வேலை தரும் வாடிக்கையாளர்களை பாருங்கள்.",
+  earnings_customers_subtitle: "அதிக வேலை தரும் வாடிக்கையாளர்களை பாருங்கள்.",
   earnings_search_placeholder: "வாடிக்கையாளர் அல்லது தொலைபேசி தேடு",
   earnings_no_results: "தேடலில் பொருந்தும் வாடிக்கையாளர்கள் இல்லை.",
   earnings_jobs: "வேலைகள்",
@@ -418,8 +418,7 @@ const ta = {
   start_time: "தொடக்க நேரம்",
   end_time: "முடிவு நேரம்",
   add_break: "இடைவேளை சேர்க்கவும்",
-  block_reason_placeholder:
-    "இந்த நேர நேரத்தை தடுப்பதற்கான காரணத்தை உள்ளிடவும்",
+  block_reason_placeholder: "இந்த நேர நேரத்தை தடுப்பதற்கான காரணத்தை உள்ளிடவும்",
   not_working_day: "வேலை நாள் அல்ல",
   save_service_to_manage_calendar:
     "நாட்காட்டியை நிர்வகிக்க முதலில் சேவையை சேமிக்கவும்",
@@ -599,7 +598,7 @@ const ta = {
   dashboard_search_title: "தேடல்",
   dashboard_search_subtitle: "சேவை, பொருள், கடை தேடுங்கள்.",
   badge_new: "புதியது",
-  dashboard_search_placeholder: "உதா: \"குழாய் பழுது\"",
+  dashboard_search_placeholder: 'உதா: "குழாய் பழுது"',
   dashboard_location_hint: "சேமித்த இடம் பயன்படுத்தப்படுகிறது.",
   dashboard_search_prompt: "அருகிலுள்ளவற்றை பார்க்க தட்டச்சு செய்யுங்கள்.",
   dashboard_search_loading: "தேடுகிறது...",
@@ -618,7 +617,8 @@ const ta = {
     "அதிகம் பயன்படுத்தும் சேவை மற்றும் பொருட்களை விரைவில் தேர்வு செய்யுங்கள்.",
   badge_personalized: "உங்களுக்காக",
   dashboard_buy_again_loading: "உங்கள் சமீப தேர்வுகள் ஏற்றப்படுகிறது...",
-  dashboard_buy_again_empty: "சில ஆர்டர்கள் மற்றும் முன்பதிவுகள் முடிந்ததும் இங்கே காட்டப்படும்.",
+  dashboard_buy_again_empty:
+    "சில ஆர்டர்கள் மற்றும் முன்பதிவுகள் முடிந்ததும் இங்கே காட்டப்படும்.",
   dashboard_buy_again_last: "கடைசி: {date}",
   dashboard_buy_again_alt: "சமீப பொருள்",
   dashboard_buy_again_recent_label: "சமீபத்தில் பயன்படுத்தியது",
@@ -630,7 +630,8 @@ const ta = {
   dashboard_booking_history_title: "முன்பதிவு வரலாறு",
   customer_booking_requests_empty: "முன்பதிவு கோரிக்கைகள் இல்லை",
   customer_booking_requests_cta: "சேவை பதிவு செய்யுங்கள்",
-  customer_booking_requests_pending_empty: "நிலுவையில் உள்ள முன்பதிவு கோரிக்கை இல்லை",
+  customer_booking_requests_pending_empty:
+    "நிலுவையில் உள்ள முன்பதிவு கோரிக்கை இல்லை",
   customer_booking_requests_waiting: "பதில் காத்திருக்கிறது",
   customer_booking_requests_view_all: "அனைத்து முன்பதிவுகள்",
   customer_booking_history_empty: "இதுவரை முன்பதிவு வரலாறு இல்லை",
@@ -644,7 +645,8 @@ const ta = {
   final_bill_confirm_failed: "இறுதி தொகையை உறுதிப்படுத்த முடியவில்லை",
   final_bill_confirmed_title: "இறுதி தொகை உறுதிப்படுத்தப்பட்டது",
   final_bill_confirmed_description: "இப்போது பணம் முறை தேர்வு.",
-  return_request_submitted_title: "திருப்பி அனுப்ப கோரிக்கை சமர்ப்பிக்கப்பட்டது",
+  return_request_submitted_title:
+    "திருப்பி அனுப்ப கோரிக்கை சமர்ப்பிக்கப்பட்டது",
   return_request_submitted_description: "விரைவில் பதில் அளிப்போம்.",
   duplicate_review_message:
     "இந்த ஆர்டருக்கான பொருளுக்கு ஏற்கனவே கருத்து அளித்துள்ளீர்கள்.",
@@ -818,8 +820,9 @@ const ta = {
   gps_weak_title: "GPS பலவீனம்",
   gps_weak_description: "GPS பலவீனம். அடையாளம் சேர்க்கவும்.",
   landmark_label: "அடையாளம் / வீட்டின் நிறம்",
-  landmark_placeholder: "உதா: \"பள்ளி எதிரில், நீல வீடு.\"",
-  landmark_helper: "பள்ளி, கோவில், ரேஷன் கடை, பேருந்து நிலையம், வீட்டின் நிறம்.",
+  landmark_placeholder: 'உதா: "பள்ளி எதிரில், நீல வீடு."',
+  landmark_helper:
+    "பள்ளி, கோவில், ரேஷன் கடை, பேருந்து நிலையம், வீட்டின் நிறம்.",
   landmark_required_inline: "அடையாளம் தேவை.",
   use_my_location: "தற்போதைய இடம் பயன்படுத்து",
   saved_gps_label: "சேமித்த GPS",
@@ -847,8 +850,7 @@ const ta = {
   booking_requested_title: "கோரிக்கை அனுப்பப்பட்டது",
   confirm_booking_title: "உறுதிப்படுத்தவும்",
   booking_number_label: "முன்பதிவு #{id}",
-  next_step_send_location:
-    "அடுத்தது: WhatsApp-ல் GPS + அடையாளம் அனுப்புங்கள்.",
+  next_step_send_location: "அடுத்தது: WhatsApp-ல் GPS + அடையாளம் அனுப்புங்கள்.",
   next_step_message_provider:
     "அடுத்தது: WhatsApp-ல் வழங்குநரை தொடர்பு கொள்ளுங்கள்.",
   send_location_to_provider: "WhatsApp-ல் {name}க்கு இடம் அனுப்பு",

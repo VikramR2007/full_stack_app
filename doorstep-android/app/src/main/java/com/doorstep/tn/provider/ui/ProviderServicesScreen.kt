@@ -949,10 +949,10 @@ private fun AddEditServiceDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank() && price.isNotBlank()) {
+                    if (name.isNotBlank() && description.isNotBlank() && price.isNotBlank()) {
                         onSave(CreateServiceRequest(
                             name = name.trim(),
-                            description = description.ifBlank { null },
+                            description = description.trim(),
                             category = selectedCategory,
                             price = price,
                             duration = duration.toIntOrNull() ?: 30,
@@ -963,7 +963,7 @@ private fun AddEditServiceDialog(
                         ))
                     }
                 },
-                enabled = name.isNotBlank() && price.isNotBlank(),
+                enabled = name.isNotBlank() && description.isNotBlank() && price.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = ProviderBlue)
             ) {
                 Text(if (isEditing) "Update" else "Create")

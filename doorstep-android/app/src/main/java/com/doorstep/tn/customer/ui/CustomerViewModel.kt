@@ -1165,8 +1165,8 @@ class CustomerViewModel @Inject constructor(
     }
 
     fun updateProfileLocation(
-        latitude: String,
-        longitude: String,
+        latitude: String?,
+        longitude: String?,
         context: String = "user",
         onSuccess: () -> Unit,
         onError: (String) -> Unit

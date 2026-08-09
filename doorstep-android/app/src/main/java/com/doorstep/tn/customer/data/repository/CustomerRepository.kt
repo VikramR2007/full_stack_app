@@ -540,8 +540,8 @@ class CustomerRepository @Inject constructor(
     }
 
     suspend fun updateProfileLocation(
-        latitude: String,
-        longitude: String,
+        latitude: String?,
+        longitude: String?,
         context: String = "user"
     ): Result<UserResponse> {
         return try {

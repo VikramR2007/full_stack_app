@@ -100,9 +100,7 @@ export default function ProviderServices() {
   const [, navigate] = useLocation();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic" | "availability">(
-    "basic",
-  );
+  const [activeTab, setActiveTab] = useState<"basic" | "availability">("basic");
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
 
@@ -154,7 +152,6 @@ export default function ProviderServices() {
     mutationFn: async (data: ServiceFormData) => {
       const res = await apiRequest("POST", "/api/services", {
         ...data,
-        providerId: user?.id,
       });
       return res.json();
     },
@@ -258,8 +255,8 @@ export default function ProviderServices() {
     const total = services?.length ?? 0;
     const online = services
       ? services.filter(
-        (service) => service.isAvailable && service.isAvailableNow !== false,
-      ).length
+          (service) => service.isAvailable && service.isAvailableNow !== false,
+        ).length
       : 0;
     const paused = total - online;
     const categories = new Set(
@@ -305,8 +302,8 @@ export default function ProviderServices() {
       const matchesSearch = !trimmed
         ? true
         : [service.name, service.description, service.category]
-          .filter((value): value is string => Boolean(value))
-          .some((value) => value.toLowerCase().includes(trimmed));
+            .filter((value): value is string => Boolean(value))
+            .some((value) => value.toLowerCase().includes(trimmed));
       const matchesCategory =
         categoryFilter === "all" || service.category === categoryFilter;
       return matchesSearch && matchesCategory;
@@ -370,7 +367,9 @@ export default function ProviderServices() {
           <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>{t("provider_services_list_title")}</CardTitle>
-              <CardDescription>{t("provider_services_list_subtitle")}</CardDescription>
+              <CardDescription>
+                {t("provider_services_list_subtitle")}
+              </CardDescription>
             </div>
             <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
               <div className="relative w-full md:w-64">
@@ -384,7 +383,9 @@ export default function ProviderServices() {
               </div>
               <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                 <SelectTrigger className="w-full md:w-56">
-                  <SelectValue placeholder={t("provider_services_filter_category")} />
+                  <SelectValue
+                    placeholder={t("provider_services_filter_category")}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t("all")}</SelectItem>
@@ -421,15 +422,20 @@ export default function ProviderServices() {
                   const isOnline =
                     service.isAvailable && service.isAvailableNow !== false;
                   const categoryLabel =
-                    categoryOptions.find((option) => option.value === service.category)
-                      ?.label || service.category || t("not_available");
+                    categoryOptions.find(
+                      (option) => option.value === service.category,
+                    )?.label ||
+                    service.category ||
+                    t("not_available");
 
                   return (
                     <Card key={service.id} className="bg-card">
                       <CardContent className="p-5 space-y-4">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-lg font-semibold">{service.name}</p>
+                            <p className="text-lg font-semibold">
+                              {service.name}
+                            </p>
                             <p className="text-sm text-muted-foreground">
                               {service.description}
                             </p>
@@ -487,7 +493,9 @@ export default function ProviderServices() {
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
-                                <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+                                <AlertDialogCancel>
+                                  {t("cancel")}
+                                </AlertDialogCancel>
                                 <AlertDialogAction
                                   onClick={() =>
                                     deleteServiceMutation.mutate(service.id)
@@ -517,7 +525,10 @@ export default function ProviderServices() {
               </DialogTitle>
             </DialogHeader>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form
+                onSubmit={form.handleSubmit(onSubmit)}
+                className="space-y-4"
+              >
                 <Tabs
                   value={activeTab}
                   onValueChange={(value) =>
@@ -526,7 +537,9 @@ export default function ProviderServices() {
                 >
                   <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="basic">{t("basic_info")}</TabsTrigger>
-                    <TabsTrigger value="availability">{t("availability")}</TabsTrigger>
+                    <TabsTrigger value="availability">
+                      {t("availability")}
+                    </TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="basic">
@@ -704,8 +717,8 @@ export default function ProviderServices() {
                   >
                     {(createServiceMutation.isPending ||
                       updateServiceMutation.isPending) && (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      )}
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
                     {editingService ? t("update_service") : t("create_service")}
                   </Button>
                 </div>

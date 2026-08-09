@@ -261,6 +261,16 @@ Or start both processes with one command using the existing `.env` file:
 npm run dev:all
 ```
 
+`dev:all` detects the active non-loopback IPv4 address and prints the LAN
+frontend, API health, and admin login URLs. This makes the web app reachable
+from another device on the same network. Use `DEV_ALL_HOST=192.168.1.10 npm run
+dev:all` when the machine has multiple network interfaces or a VPN and you
+need to select a specific address. The admin entry point is always
+`/admin/login`; it still requires the configured admin credentials and server
+permissions. The printed API URL is also the `LOCAL_API_BASE_URL` value for a
+physical Android device; an Android emulator should use
+`http://10.0.2.2:<api-port>` instead.
+
 Press `Ctrl+C` once to stop both the API and frontend.
 
 Important behavior:

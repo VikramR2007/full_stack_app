@@ -2,11 +2,7 @@ import React, { Suspense, lazy, useEffect, useState } from "react";
 import { ShopLayout } from "@/components/layout/shop-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +39,9 @@ import { getVerificationError, parseApiError } from "@/lib/api-error";
 import { useShopContext } from "@/hooks/use-shop-context";
 import { Label } from "@/components/ui/label";
 
-const ProductFormDialogLazy = lazy(() => import("./components/ProductFormDialog"));
+const ProductFormDialogLazy = lazy(
+  () => import("./components/ProductFormDialog"),
+);
 
 const productFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -125,9 +123,7 @@ export default function ShopProducts() {
   const canWriteProducts = hasPermission("products:write");
 
   const resolvedProductsQueryKey =
-    shopContextId !== null
-      ? [`/api/products/shop/${shopContextId}`]
-      : null;
+    shopContextId !== null ? [`/api/products/shop/${shopContextId}`] : null;
   const invalidateProductsQuery = () => {
     if (resolvedProductsQueryKey) {
       queryClient.invalidateQueries({ queryKey: resolvedProductsQueryKey });
@@ -224,11 +220,11 @@ export default function ShopProducts() {
         throw new Error("Unable to determine shop context for this action");
       }
       // Format the data for API submission
+      const { shopId: _formShopId, ...productFields } = data;
       const formattedData = {
-        ...data,
-        shopId: shopContextId,
+        ...productFields,
         price: String(data.price),
-        mrp: String(data.mrp),
+        mrp: String(data.mrp ?? data.price),
         // Ensure dimensions are properly formatted
         dimensions: data.dimensions,
         // Convert weight to string if present
@@ -424,7 +420,8 @@ export default function ShopProducts() {
     if (!shopContextId || !canWriteProducts) {
       toast({
         title: t("error"),
-        description: "You do not have permission to manage products for this shop.",
+        description:
+          "You do not have permission to manage products for this shop.",
         variant: "destructive",
       });
       return;
@@ -496,7 +493,9 @@ export default function ShopProducts() {
               <CardContent className="p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold break-words">{product.name}</h3>
+                    <h3 className="font-semibold break-words">
+                      {product.name}
+                    </h3>
                     <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
                       {product.description}
                     </p>
@@ -560,10 +559,11 @@ export default function ShopProducts() {
                     <span>{t("availability")}</span>
                     <div className="flex items-center gap-2">
                       <span
-                        className={`rounded-full px-2 py-1 text-xs font-semibold ${isAvailable
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-muted text-muted-foreground"
-                          }`}
+                        className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                          isAvailable
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-muted text-muted-foreground"
+                        }`}
                       >
                         {isAvailable
                           ? t("inventory_have_it")
@@ -694,11 +694,13 @@ export default function ShopProducts() {
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {productFilterConfig.categories.slice(0, 10).map((cat) => (
-                        <SelectItem key={cat.value} value={cat.value}>
-                          {cat.label}
-                        </SelectItem>
-                      ))}
+                      {productFilterConfig.categories
+                        .slice(0, 10)
+                        .map((cat) => (
+                          <SelectItem key={cat.value} value={cat.value}>
+                            {cat.label}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>

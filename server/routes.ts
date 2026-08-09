@@ -22,14 +22,8 @@ import { sanitizeUser } from "./security/sanitizeUser";
 import { z } from "zod";
 import path from "path";
 import fs from "node:fs";
+import { getCache, setCache, invalidateCache } from "./services/cache.service";
 import {
-  getCache,
-  setCache,
-  invalidateCache,
-} from "./services/cache.service";
-import {
-  insertServiceSchema,
-  insertProductSchema,
   insertReviewSchema,
   insertUserSchema,
   shopProfileSchema,
@@ -62,7 +56,11 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import { db } from "./db";
 import crypto from "crypto";
 import { performance } from "node:perf_hooks";
-import { formatIndianDisplay, toIndianTime, fromIndianTime } from "@shared/date-utils"; // Import IST utility
+import {
+  formatIndianDisplay,
+  toIndianTime,
+  fromIndianTime,
+} from "@shared/date-utils"; // Import IST utility
 import {
   normalizeProductCategory,
   normalizeServiceCategory,
@@ -74,10 +72,7 @@ import {
   toNumericCoordinate,
   haversineDistanceKm,
 } from "./utils/geo";
-import {
-  buildGeoDistanceCondition,
-  shouldUsePostgis,
-} from "./utils/geo-sql";
+import { buildGeoDistanceCondition, shouldUsePostgis } from "./utils/geo-sql";
 import { registerPromotionRoutes } from "./routes/promotions"; // Import promotion routes
 import { bookingsRouter } from "./routes/bookings";
 import { ordersRouter } from "./routes/orders";
@@ -92,18 +87,18 @@ import {
   coerceNumericId,
   type RequestWithContext,
 } from "./workerAuth";
-import {
-  usernameLookupLimiter,
-} from "./security/rateLimiters";
-import {
-  registerRealtimeClient,
-} from "./realtime";
-import {
-  hasRoleAccess,
-  isProviderUser,
-} from "./security/roleAccess";
+import { usernameLookupLimiter } from "./security/rateLimiters";
+import { registerRealtimeClient } from "./realtime";
+import { hasRoleAccess, isProviderUser } from "./security/roleAccess";
 import { createCsrfProtection } from "./security/csrfProtection";
 import { formatValidationError } from "./utils/zod";
+import { locationUpdateSchema } from "./utils/location";
+import {
+  productCreateSchema,
+  productUpdateSchema,
+  serviceCreateSchema,
+  serviceUpdateSchema,
+} from "./utils/mutationSchemas";
 import { resolveTraceContextFromHeaders } from "./tracing";
 //import { registerShopRoutes } from "./routes/shops"; // Import shop routes
 import {
@@ -139,46 +134,38 @@ const SHOP_DETAIL_CACHE_TTL_SECONDS = 120;
 const NEARBY_SEARCH_LIMIT = 200;
 const GLOBAL_SEARCH_RESULT_LIMIT = 25;
 
-const locationUpdateSchema = z
-  .object({
-    latitude: z.coerce.number().min(-90).max(90),
-    longitude: z.coerce.number().min(-180).max(180),
-    context: z.string().optional(),
-  })
-  .strict();
-
 const nearbySearchSchema = z
   .object({
     lat: z.coerce.number().min(-90).max(90),
     lng: z.coerce.number().min(-180).max(180),
-    radius: z
-      .coerce.number()
+    radius: z.coerce
+      .number()
       .min(MIN_NEARBY_RADIUS_KM)
       .max(MAX_NEARBY_RADIUS_KM)
       .default(DEFAULT_NEARBY_RADIUS_KM),
   })
   .strict();
 
-
 type RequestWithAuth = Request & {
-  user?:
-  | {
+  user?: {
     id?: number | string;
     role?: string;
     isSuspended?: boolean;
     verificationStatus?: string | null;
-  }
-  | null;
+  } | null;
   session?: (Request["session"] & { adminId?: string | null }) | null;
 };
 
-function buildPublicShopResponse(shop: User & { ownerId?: number; shopTableId?: number }) {
+function buildPublicShopResponse(
+  shop: User & { ownerId?: number; shopTableId?: number },
+) {
   const modes = resolveShopModes(shop.shopProfile);
   const publicShopProfile = shop.shopProfile
     ? (() => {
-      const { payLaterWhitelist: _payLaterWhitelist, ...rest } = shop.shopProfile;
-      return rest;
-    })()
+        const { payLaterWhitelist: _payLaterWhitelist, ...rest } =
+          shop.shopProfile;
+        return rest;
+      })()
     : null;
   return {
     id: shop.id, // This is the user ID (owner), used for product lookups
@@ -219,8 +206,12 @@ function buildShopProfileFromRecord(shop: Shop): ShopProfile {
     shopAddressCity: shop.shopAddressCity ?? undefined,
     shopAddressState: shop.shopAddressState ?? undefined,
     shopAddressPincode: shop.shopAddressPincode ?? undefined,
-    shopLocationLat: shop.shopLocationLat ? Number(shop.shopLocationLat) : undefined,
-    shopLocationLng: shop.shopLocationLng ? Number(shop.shopLocationLng) : undefined,
+    shopLocationLat: shop.shopLocationLat
+      ? Number(shop.shopLocationLat)
+      : undefined,
+    shopLocationLng: shop.shopLocationLng
+      ? Number(shop.shopLocationLng)
+      : undefined,
     workingHours: shop.workingHours ?? { from: "09:00", to: "18:00", days: [] },
     shippingPolicy: shop.shippingPolicy ?? undefined,
     returnPolicy: shop.returnPolicy ?? undefined,
@@ -280,7 +271,10 @@ async function fetchShopOwnerWithProfile(
       return hydrateShopOwner(owner, shop);
     }
   } catch (err) {
-    logger.warn({ err, ownerId }, "Failed to fetch shop profile from shops table");
+    logger.warn(
+      { err, ownerId },
+      "Failed to fetch shop profile from shops table",
+    );
   }
 
   if (owner.shopProfile) return owner;
@@ -326,17 +320,15 @@ const isValidDateString = (value: string) =>
   !Number.isNaN(new Date(value).getTime());
 
 const formatUserAddress = (
-  user?:
-    | Pick<
-      User,
-      | "addressStreet"
-      | "addressLandmark"
-      | "addressCity"
-      | "addressState"
-      | "addressPostalCode"
-      | "addressCountry"
-    >
-    | null,
+  user?: Pick<
+    User,
+    | "addressStreet"
+    | "addressLandmark"
+    | "addressCity"
+    | "addressState"
+    | "addressPostalCode"
+    | "addressCountry"
+  > | null,
 ): string | null => {
   if (!user) return null;
   const parts = [
@@ -381,9 +373,11 @@ function extractUserCoordinates(
   };
 }
 
-function resolveShopModes(
-  profile: ShopProfile | null | undefined,
-): { catalogModeEnabled: boolean; openOrderMode: boolean; allowPayLater: boolean } {
+function resolveShopModes(profile: ShopProfile | null | undefined): {
+  catalogModeEnabled: boolean;
+  openOrderMode: boolean;
+  allowPayLater: boolean;
+} {
   const catalogModeEnabled = Boolean(profile?.catalogModeEnabled);
   const openOrderMode =
     profile?.openOrderMode !== undefined
@@ -445,7 +439,8 @@ async function evaluatePayLaterEligibility(
     ]);
     const ordersForShop = await storage.getOrdersByShop(shop.id);
     const isKnownCustomer = ordersForShop.some(
-      (order) => order.customerId === customerId && eligibleStatuses.has(order.status),
+      (order) =>
+        order.customerId === customerId && eligibleStatuses.has(order.status),
     );
     return {
       allowPayLater: true,
@@ -472,8 +467,6 @@ async function evaluatePayLaterEligibility(
       ),
     );
   const isKnownCustomer = Number(priorOrders[0]?.value ?? 0) > 0;
-
-
 
   return {
     allowPayLater: isWhitelisted || isKnownCustomer,
@@ -552,24 +545,20 @@ function buildUserResponse(
 
 type CustomerBookingHydrated = Booking & {
   service?: Service | null;
-  customer?:
-  | {
+  customer?: {
     id: number;
     name: string | null;
     phone: string | null;
     latitude: number | null;
     longitude: number | null;
-  }
-  | null;
-  provider?:
-  | {
+  } | null;
+  provider?: {
     id: number;
     name: string | null;
     phone: string | null;
     latitude: number | null;
     longitude: number | null;
-  }
-  | null;
+  } | null;
   relevantAddress?: Record<string, string | null> | null;
 };
 
@@ -582,7 +571,8 @@ async function hydrateCustomerBookings(
 
   const bookingIds = bookingList.map((b) => b.id);
 
-  const bookingsWithRelations = await storage.getBookingsWithRelations(bookingIds);
+  const bookingsWithRelations =
+    await storage.getBookingsWithRelations(bookingIds);
 
   return bookingsWithRelations.map((booking) => {
     const service = booking.service;
@@ -601,19 +591,19 @@ async function hydrateCustomerBookings(
       service: service, // Matches CustomerBookingHydrated
       customer: customer
         ? {
-          id: customer.id,
-          name: customer.name,
-          phone: customer.phone,
-          ...extractUserCoordinates(customer),
-        }
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone,
+            ...extractUserCoordinates(customer),
+          }
         : null,
       provider: provider
         ? {
-          id: provider.id,
-          name: provider.name,
-          phone: provider.phone,
-          ...extractUserCoordinates(provider),
-        }
+            id: provider.id,
+            name: provider.name,
+            phone: provider.phone,
+            ...extractUserCoordinates(provider),
+          }
         : null,
       relevantAddress,
     };
@@ -647,7 +637,8 @@ async function hydrateProviderBookings(
 
   const bookingIds = bookingList.map((b) => b.id);
 
-  const bookingsWithRelations = await storage.getBookingsWithRelations(bookingIds);
+  const bookingsWithRelations =
+    await storage.getBookingsWithRelations(bookingIds);
 
   return bookingsWithRelations.map((booking) => {
     const service = booking.service;
@@ -659,17 +650,17 @@ async function hydrateProviderBookings(
       service: service || { name: "Unknown Service" },
       customer: customer
         ? {
-          id: customer.id,
-          name: customer.name,
-          phone: customer.phone,
-          addressStreet: customer.addressStreet,
-          addressLandmark: customer.addressLandmark,
-          addressCity: customer.addressCity,
-          addressState: customer.addressState,
-          addressPostalCode: customer.addressPostalCode,
-          addressCountry: customer.addressCountry,
-          ...extractUserCoordinates(customer),
-        }
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone,
+            addressStreet: customer.addressStreet,
+            addressLandmark: customer.addressLandmark,
+            addressCity: customer.addressCity,
+            addressState: customer.addressState,
+            addressPostalCode: customer.addressPostalCode,
+            addressCountry: customer.addressCountry,
+            ...extractUserCoordinates(customer),
+          }
         : null,
       relevantAddress,
     };
@@ -751,10 +742,9 @@ async function hydrateOrders(
     }, 0);
     const deliveryFeeValue = Number(order.deliveryFee ?? 0);
     const totalValue = Number(order.total ?? 0);
-    const discountValue =
-      Number.isFinite(totalValue)
-        ? itemsSubtotal + deliveryFeeValue + PLATFORM_SERVICE_FEE - totalValue
-        : 0;
+    const discountValue = Number.isFinite(totalValue)
+      ? itemsSubtotal + deliveryFeeValue + PLATFORM_SERVICE_FEE - totalValue
+      : 0;
     const discount =
       Number.isFinite(discountValue) && discountValue > 0
         ? discountValue.toFixed(2)
@@ -781,7 +771,9 @@ async function hydrateOrders(
       }
 
       if (options.includeCustomer && relations.customer) {
-        const { latitude, longitude } = extractUserCoordinates(relations.customer);
+        const { latitude, longitude } = extractUserCoordinates(
+          relations.customer,
+        );
         const address = formatUserAddress(relations.customer);
         result.customer = {
           name: relations.customer.name,
@@ -960,7 +952,7 @@ async function fetchServiceBookingSlots(
   bookingDate: Date,
 ): Promise<ServiceBookingSlot[] | null> {
   const service = await storage.getService(serviceId);
-  if (!service) {
+  if (!service || service.isDeleted) {
     return null;
   }
 
@@ -1067,9 +1059,7 @@ const reviewUpdateSchema = z
 
 const reviewReplySchema = z
   .union([
-    z
-      .object({ response: z.string().trim().min(1).max(2000) })
-      .strict(),
+    z.object({ response: z.string().trim().min(1).max(2000) }).strict(),
     z.object({ reply: z.string().trim().min(1).max(2000) }).strict(),
   ])
   .transform((value) =>
@@ -1078,11 +1068,13 @@ const reviewReplySchema = z
 
 const notificationsMarkAllSchema = z
   .object({
-    role: z.enum(["customer", "provider", "shop", "worker", "admin"]).optional().nullable(),
+    role: z
+      .enum(["customer", "provider", "shop", "worker", "admin"])
+      .optional()
+      .nullable(),
   })
   .strict();
 
-const productUpdateSchema = insertProductSchema.partial();
 const quickAddProductSchema = z
   .object({
     name: z.string().min(1),
@@ -1108,14 +1100,6 @@ const productBulkUpdateSchema = z
       .min(1, { message: "At least one product update is required" }),
   })
   .strict();
-
-const serviceUpdateSchema = insertServiceSchema
-  .partial()
-  .extend({
-    serviceLocationType: z
-      .enum(["customer_location", "provider_location"])
-      .optional(),
-  });
 
 const providerAvailabilitySchema = z
   .object({
@@ -1176,8 +1160,8 @@ const servicesQuerySchema = z
     availabilityDate: dateStringSchema.optional(),
     lat: z.coerce.number().min(-90).max(90).optional(),
     lng: z.coerce.number().min(-180).max(180).optional(),
-    radius: z
-      .coerce.number()
+    radius: z.coerce
+      .number()
       .min(MIN_NEARBY_RADIUS_KM)
       .max(MAX_NEARBY_RADIUS_KM)
       .optional(),
@@ -1237,8 +1221,8 @@ const productsQuerySchema = z
     locationState: z.string().trim().max(100).optional(),
     lat: z.coerce.number().min(-90).max(90).optional(),
     lng: z.coerce.number().min(-180).max(180).optional(),
-    radius: z
-      .coerce.number()
+    radius: z.coerce
+      .number()
       .min(MIN_NEARBY_RADIUS_KM)
       .max(MAX_NEARBY_RADIUS_KM)
       .optional(),
@@ -1271,8 +1255,8 @@ const globalSearchQuerySchema = z
     q: z.string().trim().min(1).max(200),
     lat: z.coerce.number().min(-90).max(90).optional(),
     lng: z.coerce.number().min(-180).max(180).optional(),
-    radius: z
-      .coerce.number()
+    radius: z.coerce
+      .number()
       .min(MIN_NEARBY_RADIUS_KM)
       .max(MAX_NEARBY_RADIUS_KM)
       .optional(),
@@ -1341,7 +1325,10 @@ function requireRole(roles: string[]) {
           await setCache(`user_session:${req.user.id}`, req.user, 300);
         }
       } catch (error) {
-        logger.warn({ err: error, userId: req.user.id }, "Failed to refresh role capability");
+        logger.warn(
+          { err: error, userId: req.user.id },
+          "Failed to refresh role capability",
+        );
       }
     }
 
@@ -1373,25 +1360,22 @@ function ensureProfileVerified(
   return true;
 }
 
-
 export async function registerRoutes(app: Express): Promise<Server> {
   initializeAuth(app);
 
   const csrfProtection: RequestHandler =
     process.env.NODE_ENV === "test"
-      ? ((req, _res, next) => {
-        (req as Request & { csrfToken?: () => string }).csrfToken = () =>
-          "test-csrf-token";
-        next();
-      })
+      ? (req, _res, next) => {
+          (req as Request & { csrfToken?: () => string }).csrfToken = () =>
+            "test-csrf-token";
+          next();
+        }
       : createCsrfProtection({
           ignoreMethods: ["GET", "HEAD", "OPTIONS", "PROPFIND"],
           // Exempt analytics endpoint - sendBeacon doesn't preserve session cookies for CSRF.
           // Session-changing auth calls use the same browser helper as other
           // mutations, so they receive and send a token before creating a session.
-          ignorePaths: [
-            "/api/performance-metrics",
-          ],
+          ignorePaths: ["/api/performance-metrics"],
         });
 
   app.use(csrfProtection);
@@ -1444,12 +1428,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const responseBytesFromHeader = parseByteCount(
               res.getHeader("content-length"),
             );
-            const socketBytesWrittenAfter = req.socket?.bytesWritten ?? socketBytesWrittenBefore;
+            const socketBytesWrittenAfter =
+              req.socket?.bytesWritten ?? socketBytesWrittenBefore;
             const responseBytesFromSocket = Math.max(
               0,
               socketBytesWrittenAfter - socketBytesWrittenBefore,
             );
-            const responseBytes = responseBytesFromHeader ?? responseBytesFromSocket;
+            const responseBytes =
+              responseBytesFromHeader ?? responseBytesFromSocket;
             const responseBytesSource =
               responseBytesFromHeader !== undefined
                 ? "content-length"
@@ -1483,7 +1469,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           method: req.method,
           path: req.originalUrl,
           ip: req.ip,
-          userAgent: Array.isArray(userAgentHeader) ? userAgentHeader[0] : userAgentHeader,
+          userAgent: Array.isArray(userAgentHeader)
+            ? userAgentHeader[0]
+            : userAgentHeader,
           userId,
           userRole,
           adminId,
@@ -1585,7 +1573,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
   const numericParamSchemas: Record<string, z.ZodTypeAny> = {
     id: z.coerce.number().int().positive(),
     orderId: z.coerce.number().int().positive(),
@@ -1679,10 +1666,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Register domain routers
-  app.use('/api/bookings', bookingsRouter);
-  app.use('/api/orders', ordersRouter);
+  app.use("/api/bookings", bookingsRouter);
+  app.use("/api/orders", ordersRouter);
   registerWorkerRoutes(app);
-
 
   // Booking Notification System
   // Get pending booking requests for a provider
@@ -1707,8 +1693,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "awaiting_payment",
           "en_route",
         ]);
-        const { data: providerBookings } = await storage.getBookingsByProvider(providerId, { page: 1, limit: 100 });
-        const scheduledBookings = providerBookings.filter((booking) => scheduledStatuses.has(booking.status));
+        const { data: providerBookings } = await storage.getBookingsByProvider(
+          providerId,
+          { page: 1, limit: 100 },
+        );
+        const scheduledBookings = providerBookings.filter((booking) =>
+          scheduledStatuses.has(booking.status),
+        );
 
         const serviceIds = Array.from(
           new Set(pendingBookings.map((b) => b.serviceId!).filter(Boolean)),
@@ -1821,9 +1812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const sameDayBookings =
               scheduledBookingsByDay.get(buildDayKey(bookingDate)) || [];
 
-            let nearest:
-              | { booking: Booking; distanceKm: number }
-              | null = null;
+            let nearest: { booking: Booking; distanceKm: number } | null = null;
             for (const otherBooking of sameDayBookings) {
               const otherCoords = getBookingCoordinates(otherBooking);
               if (!otherCoords) continue;
@@ -1885,14 +1874,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(bookingsWithDetails);
       } catch (error) {
         logger.error("Error fetching pending bookings:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch pending bookings",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch pending bookings",
+        });
       }
     },
   );
@@ -1906,7 +1893,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json(formatValidationError(parsedBody.error));
       }
       // Destructure bookingDate as well, it might be undefined if not a reschedule
-      const { status, comments, bookingDate, changedBy: _changedBy } = parsedBody.data;
+      const {
+        status,
+        comments,
+        bookingDate,
+        changedBy: _changedBy,
+      } = parsedBody.data;
       const currentUser = req.user!;
 
       logger.info(`[API] Attempting to update booking ${bookingId}`);
@@ -1931,10 +1923,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const notificationsToCreate: InsertNotification[] = [];
 
       // Scenario 1: Customer reschedules
-      if (
-        bookingDate &&
-        booking.customerId === currentUser.id
-      ) {
+      if (bookingDate && booking.customerId === currentUser.id) {
         logger.info(
           `[API] Customer ${currentUser.id} rescheduling booking ${bookingId} to ${bookingDate}`,
         );
@@ -1990,10 +1979,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId: booking.customerId,
               type: "booking_rescheduled_by_provider",
               title: "Booking Rescheduled by Provider",
-              message: `Provider ${currentUser.name || "ID: " + currentUser.id
-                } has rescheduled your booking #${bookingId} for '${service.name
-                }' to ${formattedProviderRescheduleDate}. ${comments ? "Comments: " + comments : ""
-                }`,
+              message: `Provider ${
+                currentUser.name || "ID: " + currentUser.id
+              } has rescheduled your booking #${bookingId} for '${
+                service.name
+              }' to ${formattedProviderRescheduleDate}. ${
+                comments ? "Comments: " + comments : ""
+              }`,
               isRead: false,
               relatedBookingId: bookingId,
             });
@@ -2122,12 +2114,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(finalUpdatedBooking);
     } catch (error) {
       logger.error(`[API] Error updating booking ${bookingId}:`, error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to update booking",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to update booking",
+      });
     }
   });
 
@@ -2146,10 +2136,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { limit, offset } = parsedQuery.data;
         const customerId = req.user!.id;
         const start = performance.now();
-        const bookingRequests = await storage.getBookingRequestsWithStatusForCustomer(
-          customerId,
-          { limit, offset },
-        );
+        const bookingRequests =
+          await storage.getBookingRequestsWithStatusForCustomer(customerId, {
+            limit,
+            offset,
+          });
         const prepElapsed = performance.now();
 
         const bookingsWithDetails =
@@ -2172,14 +2163,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(bookingsWithDetails); // Send the response back
       } catch (error) {
         logger.error("Error fetching booking requests:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch booking requests",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch booking requests",
+        });
       }
     },
   );
@@ -2224,14 +2213,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(bookingsWithDetails);
       } catch (error) {
         logger.error("Error fetching booking history:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch booking history",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch booking history",
+        });
       }
     },
   );
@@ -2245,21 +2232,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
       try {
-        const history = await storage.getBookingHistoryForProvider(req.user!.id, {
-          page,
-          limit,
-        });
+        const history = await storage.getBookingHistoryForProvider(
+          req.user!.id,
+          {
+            page,
+            limit,
+          },
+        );
         res.json(history);
       } catch (error) {
         logger.error("Error fetching booking history:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch booking history",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch booking history",
+        });
       }
     },
   );
@@ -2275,14 +2263,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ message: "Expired bookings processed successfully" });
       } catch (error) {
         logger.error("Error processing expired bookings:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to process expired bookings",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to process expired bookings",
+        });
       }
     },
   );
@@ -2309,7 +2295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (
           booking.customerId !== req.user!.id &&
           (await storage.getService(booking.serviceId!))?.providerId !==
-          req.user!.id
+            req.user!.id
         ) {
           return res.status(403).json({ message: "Not authorized" });
         }
@@ -2320,14 +2306,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ booking: updated });
       } catch (error) {
         logger.error("Error reporting dispute:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to report dispute",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to report dispute",
+        });
       }
     },
   );
@@ -2356,14 +2338,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ booking: updated });
       } catch (error) {
         logger.error("Error resolving dispute:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to resolve dispute",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to resolve dispute",
+        });
       }
     },
   );
@@ -2379,14 +2359,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(disputes);
       } catch (error) {
         logger.error("Error fetching disputes:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch disputes",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch disputes",
+        });
       }
     },
   );
@@ -2399,35 +2375,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const { latitude, longitude, context } = req.body;
+      const { latitude, longitude, context } = parsed.data;
       logger.debug(
-        { userId: req.user?.id, context, lat: Number(latitude), lng: Number(longitude) },
+        {
+          userId: req.user?.id,
+          context,
+          lat: Number(latitude),
+          lng: Number(longitude),
+        },
         "Processing location update",
       );
 
-      const lat = Number(latitude);
-      const lng = Number(longitude);
-
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        const msg = `Invalid coordinates. Received: lat=${latitude}, lng=${longitude}, typeLat=${typeof latitude}, typeLng=${typeof longitude}`;
-        logger.warn(msg);
-        return res.status(400).json({
-          message: msg,
-        });
-      }
+      const isClearing = latitude === null && longitude === null;
+      const lat = latitude === null ? null : Number(latitude);
+      const lng = longitude === null ? null : Number(longitude);
 
       const userId = req.user!.id;
 
-      if (context === "shop" && (req.user?.role === "shop" || req.user?.hasShopProfile)) {
+      if (
+        context === "shop" &&
+        (req.user?.role === "shop" || req.user?.hasShopProfile)
+      ) {
         // Update Shop Location
-        await db.primary
+        const updatedShops = await db.primary
           .update(shops)
           .set({
-            shopLocationLat: String(lat),
-            shopLocationLng: String(lng),
-            updatedAt: new Date()
+            shopLocationLat: lat === null ? null : String(lat),
+            shopLocationLng: lng === null ? null : String(lng),
+            updatedAt: new Date(),
           })
-          .where(eq(shops.ownerId, userId));
+          .where(eq(shops.ownerId, userId))
+          .returning({ ownerId: shops.ownerId });
+
+        if (updatedShops.length === 0) {
+          return res.status(404).json({ message: "Shop profile not found" });
+        }
 
         // Invalidate shop cache if needed
         await invalidateCache(`shop_detail_${userId}`);
@@ -2435,14 +2417,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Return user as is, or fetch updated shop to return?
         // Frontend expects { user } response to update cache, but we just updated shop.
         // We can return the user object as is since user's personal location didn't change.
-        return res.json({ message: "Shop location updated", user: req.user });
+        return res.json({
+          message: isClearing
+            ? "Shop location cleared"
+            : "Shop location updated",
+          user: req.user,
+        });
       }
 
       // Default: Update User Personal Location
-      // We use the raw values as they are checked for number/finite above
       const updatedUser = await storage.updateUser(userId, {
-        latitude: String(lat),
-        longitude: String(lng),
+        latitude: lat === null ? null : String(lat),
+        longitude: lng === null ? null : String(lng),
       });
       const safeUser = sanitizeUser(updatedUser);
       if (!safeUser) {
@@ -2450,22 +2436,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (req.user) {
-        req.user.latitude = String(lat) as any;
-        req.user.longitude = String(lng) as any;
+        req.user.latitude = lat === null ? null : (String(lat) as any);
+        req.user.longitude = lng === null ? null : (String(lng) as any);
       }
 
       res.json({
-        message: "Location updated!",
+        message: isClearing ? "Location cleared" : "Location updated!",
         user: safeUser,
       });
     } catch (error) {
       logger.error("Error updating profile location", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to update location",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to update location",
+      });
     }
   });
 
@@ -2502,7 +2486,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Exclude own shop if user is logged in
           currentUserId !== undefined
             ? sql`${shops.ownerId} != ${currentUserId}`
-            : sql`TRUE`
+            : sql`TRUE`,
         ),
       )
       .orderBy(distanceExpr)
@@ -2510,8 +2494,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Transform to PublicShop format for frontend compatibility
     const publicShops = shopRecords
-      .filter(record => record.users !== null)
-      .map(record => {
+      .filter((record) => record.users !== null)
+      .map((record) => {
         const shop = record.shops;
         const owner = record.users!;
         // Build a User-like object similar to getShops()
@@ -2523,7 +2507,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: shop.description || "",
             businessType: shop.businessType || "",
             gstin: shop.gstin,
-            workingHours: shop.workingHours || { from: "09:00", to: "18:00", days: [] },
+            workingHours: shop.workingHours || {
+              from: "09:00",
+              to: "18:00",
+              days: [],
+            },
             shippingPolicy: shop.shippingPolicy || undefined,
             returnPolicy: shop.returnPolicy || undefined,
             freeDeliveryRadiusKm:
@@ -2548,7 +2536,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     res.json(publicShops);
   });
-
 
   const profileUpdateSchema = insertUserSchema
     .omit({
@@ -2577,18 +2564,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         z.string().email("Invalid email address").optional().nullable(),
       ),
       shopProfile: shopProfileSchema.partial().optional().nullable(),
-      upiId: z
-        .preprocess(
-          (value) =>
-            typeof value === "string" && value.trim().length === 0
-              ? null
-              : value,
-          z
-            .string()
-            .regex(/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/)
-            .optional()
-            .nullable(),
-        ),
+      upiId: z.preprocess(
+        (value) =>
+          typeof value === "string" && value.trim().length === 0 ? null : value,
+        z
+          .string()
+          .regex(/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/)
+          .optional()
+          .nullable(),
+      ),
       upiQrCodeUrl: z.preprocess(
         (value) =>
           typeof value === "string" && value.trim().length === 0 ? null : value,
@@ -2625,7 +2609,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { phone: _ignoredPhone, ...editableProfileData } = result.data;
 
       // Sanitize paymentMethods using shared schema
-      let updateData: Partial<User> = { ...editableProfileData } as Partial<User>;
+      let updateData: Partial<User> = {
+        ...editableProfileData,
+      } as Partial<User>;
       if ("paymentMethods" in updateData) {
         const pmResult = PaymentMethodSchema.array().safeParse(
           (updateData as any).paymentMethods,
@@ -2645,9 +2631,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updatedUser = await storage.updateUser(userId, updateData);
 
       const skipShopSync =
-        process.env.NODE_ENV === "test" || process.env.USE_IN_MEMORY_DB === "true";
-      if (!skipShopSync && (req.user?.role === "shop" || req.user?.hasShopProfile)) {
-        const shopProfileUpdate = updateData.shopProfile as ShopProfile | undefined;
+        process.env.NODE_ENV === "test" ||
+        process.env.USE_IN_MEMORY_DB === "true";
+      if (
+        !skipShopSync &&
+        (req.user?.role === "shop" || req.user?.hasShopProfile)
+      ) {
+        const shopProfileUpdate = updateData.shopProfile as
+          | ShopProfile
+          | undefined;
         const shopUpdate: Partial<typeof shops.$inferInsert> = {};
 
         if (shopProfileUpdate) {
@@ -2685,7 +2677,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 : String(shopProfileUpdate.deliveryFee);
           }
           if (shopProfileUpdate.catalogModeEnabled !== undefined) {
-            shopUpdate.catalogModeEnabled = shopProfileUpdate.catalogModeEnabled;
+            shopUpdate.catalogModeEnabled =
+              shopProfileUpdate.catalogModeEnabled;
           }
           if (shopProfileUpdate.openOrderMode !== undefined) {
             shopUpdate.openOrderMode = shopProfileUpdate.openOrderMode;
@@ -2709,13 +2702,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             shopUpdate.shopAddressState = shopProfileUpdate.shopAddressState;
           }
           if (shopProfileUpdate.shopAddressPincode !== undefined) {
-            shopUpdate.shopAddressPincode = shopProfileUpdate.shopAddressPincode;
+            shopUpdate.shopAddressPincode =
+              shopProfileUpdate.shopAddressPincode;
           }
           if (shopProfileUpdate.shopLocationLat !== undefined) {
-            shopUpdate.shopLocationLat = String(shopProfileUpdate.shopLocationLat);
+            shopUpdate.shopLocationLat =
+              shopProfileUpdate.shopLocationLat === null
+                ? null
+                : String(shopProfileUpdate.shopLocationLat);
           }
           if (shopProfileUpdate.shopLocationLng !== undefined) {
-            shopUpdate.shopLocationLng = String(shopProfileUpdate.shopLocationLng);
+            shopUpdate.shopLocationLng =
+              shopProfileUpdate.shopLocationLng === null
+                ? null
+                : String(shopProfileUpdate.shopLocationLng);
           }
         }
 
@@ -2755,12 +2755,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(safeUser);
     } catch (error) {
       logger.error("Error updating user:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to update user",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to update user",
+      });
     }
   });
 
@@ -2823,15 +2821,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(publicShops);
     } catch (error) {
       logger.error("Error fetching shops:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch shops",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch shops",
+      });
     }
   });
-
 
   // Shop dashboard stats - MUST be defined before /api/shops/:id to avoid route conflict
   app.get(
@@ -2842,20 +2837,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         const stats = await storage.getShopDashboardStats(shopContextId);
         res.json(stats);
       } catch (error) {
         logger.error("Error fetching shop dashboard stats:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch dashboard stats",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch dashboard stats",
+        });
       }
     },
   );
@@ -2874,12 +2869,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .limit(1);
       const byShopId =
         byOwnerId[0] ??
-        (await db.primary
-          .select()
-          .from(shops)
-          .leftJoin(users, eq(shops.ownerId, users.id))
-          .where(eq(shops.id, shopId))
-          .limit(1))[0];
+        (
+          await db.primary
+            .select()
+            .from(shops)
+            .leftJoin(users, eq(shops.ownerId, users.id))
+            .where(eq(shops.id, shopId))
+            .limit(1)
+        )[0];
 
       if (!byShopId) {
         return res.status(404).json({ message: "Shop not found" });
@@ -2892,19 +2889,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Shop owner not found" });
       }
 
-      const publicShop = buildPublicShopResponse(
-        hydrateShopOwner(owner, shop),
-      );
+      const publicShop = buildPublicShopResponse(hydrateShopOwner(owner, shop));
 
       res.json(publicShop);
     } catch (error) {
       logger.error("Error fetching shop by ID:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch shop",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch shop",
+      });
     }
   });
 
@@ -2929,27 +2922,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const shopOwner = await fetchShopOwnerWithProfile(user.id, user);
       if (shopOwner && req.user) {
-        // Override allowPayLater from the shops table (shopOwner.shopProfile) 
+        // Override allowPayLater from the shops table (shopOwner.shopProfile)
         // since this is the source of truth for shop settings
         const shopModes = resolveShopModes(shopOwner.shopProfile ?? null);
-        (safeUser as Record<string, unknown>).allowPayLater = shopModes.allowPayLater;
-        (safeUser as Record<string, unknown>).catalogModeEnabled = shopModes.catalogModeEnabled;
-        (safeUser as Record<string, unknown>).openOrderMode = shopModes.openOrderMode;
+        (safeUser as Record<string, unknown>).allowPayLater =
+          shopModes.allowPayLater;
+        (safeUser as Record<string, unknown>).catalogModeEnabled =
+          shopModes.catalogModeEnabled;
+        (safeUser as Record<string, unknown>).openOrderMode =
+          shopModes.openOrderMode;
         if (shopOwner.shopProfile) {
           if (canViewPrivateProfile) {
-            (safeUser as Record<string, unknown>).shopProfile = shopOwner.shopProfile;
-          } else {
-            const { payLaterWhitelist: _payLaterWhitelist, ...publicShopProfile } =
+            (safeUser as Record<string, unknown>).shopProfile =
               shopOwner.shopProfile;
-            (safeUser as Record<string, unknown>).shopProfile = publicShopProfile;
+          } else {
+            const {
+              payLaterWhitelist: _payLaterWhitelist,
+              ...publicShopProfile
+            } = shopOwner.shopProfile;
+            (safeUser as Record<string, unknown>).shopProfile =
+              publicShopProfile;
           }
         }
         const shopCoords = extractUserCoordinates(shopOwner);
         (safeUser as Record<string, unknown>).latitude = shopCoords.latitude;
         (safeUser as Record<string, unknown>).longitude = shopCoords.longitude;
-        (safeUser as Record<string, unknown>).addressStreet = shopOwner.addressStreet ?? null;
-        (safeUser as Record<string, unknown>).addressCity = shopOwner.addressCity ?? null;
-        (safeUser as Record<string, unknown>).addressState = shopOwner.addressState ?? null;
+        (safeUser as Record<string, unknown>).addressStreet =
+          shopOwner.addressStreet ?? null;
+        (safeUser as Record<string, unknown>).addressCity =
+          shopOwner.addressCity ?? null;
+        (safeUser as Record<string, unknown>).addressState =
+          shopOwner.addressState ?? null;
         (safeUser as Record<string, unknown>).addressPostalCode =
           shopOwner.addressPostalCode ?? null;
         (safeUser as Record<string, unknown>).addressCountry =
@@ -2961,25 +2964,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
             requesterId,
           );
           (safeUser as Record<string, unknown>).payLaterEligibilityForCustomer =
-          {
-            eligible:
-              eligibility.allowPayLater &&
-              (eligibility.isKnownCustomer || eligibility.isWhitelisted),
-            isKnownCustomer: eligibility.isKnownCustomer,
-            isWhitelisted: eligibility.isWhitelisted,
-          };
+            {
+              eligible:
+                eligibility.allowPayLater &&
+                (eligibility.isKnownCustomer || eligibility.isWhitelisted),
+              isKnownCustomer: eligibility.isKnownCustomer,
+              isWhitelisted: eligibility.isWhitelisted,
+            };
         }
       }
 
       res.json(safeUser);
     } catch (error) {
       logger.error("[API] Error in /api/users/:id:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch user",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch user",
+      });
     }
   });
 
@@ -2991,7 +2992,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req, res) => {
       try {
         const requestWithAuth = req as RequestWithAuth;
-        if (requestWithAuth.user?.role === "shop" || requestWithAuth.user?.hasShopProfile) {
+        if (
+          requestWithAuth.user?.role === "shop" ||
+          requestWithAuth.user?.hasShopProfile
+        ) {
           if (
             !ensureProfileVerified(
               requestWithAuth,
@@ -3019,17 +3023,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         }
-        const result = insertProductSchema.safeParse(req.body);
+        const result = productCreateSchema.safeParse(req.body);
         if (!result.success) {
           return res.status(400).json(formatValidationError(result.error));
         }
 
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         const normalizedCategory =
-          normalizeProductCategory(result.data.category) ?? result.data.category;
+          normalizeProductCategory(result.data.category) ??
+          result.data.category;
         const product = await storage.createProduct({
           ...result.data,
           category: normalizedCategory,
@@ -3041,14 +3048,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json(product);
       } catch (error) {
         logger.error("Error creating product:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create product",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to create product",
+        });
       }
     },
   );
@@ -3071,7 +3074,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const requestWithAuth = req as RequestWithAuth;
-        if (requestWithAuth.user?.role === "shop" || requestWithAuth.user?.hasShopProfile) {
+        if (
+          requestWithAuth.user?.role === "shop" ||
+          requestWithAuth.user?.hasShopProfile
+        ) {
           if (
             !ensureProfileVerified(
               requestWithAuth,
@@ -3108,7 +3114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const fallbackCategory = parsed.data.category ?? "uncategorized";
         const normalizedCategory =
           normalizeProductCategory(fallbackCategory) ?? fallbackCategory;
-        const payload = insertProductSchema.parse({
+        const payload = productCreateSchema.parse({
           name: parsed.data.name,
           description: "Quick add item",
           price: basePrice,
@@ -3117,37 +3123,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           category: normalizedCategory,
           images: parsed.data.image ? [parsed.data.image] : [],
           isAvailable: true,
+        });
+        const product = await storage.createProduct({
+          ...payload,
           shopId: shopContextId,
         });
-        const product = await storage.createProduct(payload);
         res.status(201).json(product);
       } catch (error) {
         logger.error("Error creating quick-add product:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create product",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to create product",
+        });
       }
     },
   );
 
   app.get("/api/products/shop/:id", async (req, res) => {
     try {
-      const products = await storage.getProductsByShop(getValidatedParam(req, "id"));
+      const products = await storage.getProductsByShop(
+        getValidatedParam(req, "id"),
+      );
       logger.info("Shop products:", products);
       res.json(products);
     } catch (error) {
       logger.error("Error fetching shop products:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch products",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch products",
+      });
     }
   });
 
@@ -3164,7 +3168,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
 
         const dedupedUpdates = new Map<
@@ -3207,9 +3213,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...dedupedUpdates.get(productId)!,
         }));
 
-        const updatedProducts = await storage.bulkUpdateProductStock(
-          normalizedUpdates,
-        );
+        const updatedProducts =
+          await storage.bulkUpdateProductStock(normalizedUpdates);
 
         await Promise.all(
           normalizedUpdates.map(({ productId }) =>
@@ -3239,7 +3244,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const productId = getValidatedParam(req, "id");
         const product = await storage.getProduct(productId);
 
-        if (!product) {
+        if (!product || product.isDeleted) {
           return res.status(404).json({ message: "Product not found" });
         }
 
@@ -3247,7 +3252,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           typeof req.shopContextId === "number" ? req.shopContextId : null;
 
         if (!shopContextId || product.shopId !== shopContextId) {
-          return res.status(403).json({ message: "Not authorized to update this product" });
+          return res
+            .status(403)
+            .json({ message: "Not authorized to update this product" });
         }
 
         const parsedBody = productUpdateSchema.safeParse(req.body);
@@ -3256,7 +3263,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (Object.keys(parsedBody.data).length === 0) {
-          return res.status(400).json({ message: "No product fields provided" });
+          return res
+            .status(400)
+            .json({ message: "No product fields provided" });
         }
 
         const updateData: Record<string, unknown> = { ...parsedBody.data };
@@ -3286,7 +3295,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (typeof updateData.category === "string") {
           updateData.category =
-            normalizeProductCategory(updateData.category) ?? updateData.category;
+            normalizeProductCategory(updateData.category) ??
+            updateData.category;
         }
 
         // The storage.updateProduct method expects Partial<Product>
@@ -3300,19 +3310,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         await Promise.all([
           invalidateCache(`product_detail_${shopContextId}_${productId}`),
+          invalidateCache(`product_direct_${productId}`),
           invalidateCache(`products:shop:${shopContextId}`),
         ]);
         res.json(updatedProduct);
       } catch (error) {
         logger.error("[API] Error in /api/products/:id PATCH:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update product",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to update product",
+        });
       }
     },
   );
@@ -3324,23 +3331,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireRole(["provider"]),
     async (req, res) => {
       if (
-        !ensureProfileVerified(
-          req as RequestWithAuth,
-          res,
-          "publish services",
-        )
+        !ensureProfileVerified(req as RequestWithAuth, res, "publish services")
       ) {
         return;
       }
       try {
         // Add serviceLocationType to the validation
-        const serviceSchemaWithLocation = insertServiceSchema.extend({
-          serviceLocationType: z
-            .enum(["customer_location", "provider_location"])
-            .optional()
-            .default("provider_location"),
-        });
-        const result = serviceSchemaWithLocation.safeParse(req.body);
+        const result = serviceCreateSchema.safeParse(req.body);
         if (!result.success) {
           logger.error(
             "[API] /api/services POST - Validation error:",
@@ -3350,7 +3347,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const normalizedCategory =
-          normalizeServiceCategory(result.data.category) ?? result.data.category;
+          normalizeServiceCategory(result.data.category) ??
+          result.data.category;
         const serviceData = {
           ...result.data,
           category: normalizedCategory,
@@ -3364,14 +3362,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json(service);
       } catch (error) {
         logger.error("Error creating service:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create service",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to create service",
+        });
       }
     },
   );
@@ -3385,12 +3379,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(services);
     } catch (error) {
       logger.error("Error fetching provider services:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch services",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch services",
+      });
     }
   });
 
@@ -3430,7 +3422,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           invalidateCache(`services:provider:${providerId}`),
         ]);
 
-        res.json({ updated: updatedServices.length, services: updatedServices });
+        res.json({
+          updated: updatedServices.length,
+          services: updatedServices,
+        });
       } catch (error) {
         logger.error("Error updating provider availability:", error);
         res.status(400).json({
@@ -3459,7 +3454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const service = await storage.getService(serviceId);
 
-        if (!service) {
+        if (!service || service.isDeleted) {
           logger.info("[API] /api/services/:id PATCH - Service not found");
           return res.status(404).json({ message: "Service not found" });
         }
@@ -3477,13 +3472,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (Object.keys(parsedBody.data).length === 0) {
-          return res.status(400).json({ message: "No service fields provided" });
+          return res
+            .status(400)
+            .json({ message: "No service fields provided" });
         }
 
         const updateData: Record<string, unknown> = { ...parsedBody.data };
         if (typeof updateData.category === "string") {
           updateData.category =
-            normalizeServiceCategory(updateData.category) ?? updateData.category;
+            normalizeServiceCategory(updateData.category) ??
+            updateData.category;
         }
 
         const updatedService = await storage.updateService(
@@ -3501,14 +3499,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updatedService);
       } catch (error) {
         logger.error("[API] Error updating service:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update service",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to update service",
+        });
       }
     },
   );
@@ -3553,8 +3547,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (availableNow !== undefined) filters.availableNow = availableNow;
       if (locationCity) filters.locationCity = locationCity;
       if (locationState) filters.locationState = locationState;
-      if (locationPostalCode)
-        filters.locationPostalCode = locationPostalCode;
+      if (locationPostalCode) filters.locationPostalCode = locationPostalCode;
       if (availabilityDate) filters.availabilityDate = availabilityDate;
       if (lat !== undefined && lng !== undefined) {
         filters.lat = lat;
@@ -3601,10 +3594,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         providers.map((provider) => [provider.id, provider]),
       );
 
-      const ratingStats = new Map<
-        number,
-        { total: number; count: number }
-      >();
+      const ratingStats = new Map<number, { total: number; count: number }>();
       for (const review of reviews) {
         if (review.serviceId == null) {
           continue;
@@ -3628,30 +3618,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const servicesWithDetails = services.map((service) => {
         const provider =
           service.providerId !== null
-            ? providerMap.get(service.providerId) ?? null
+            ? (providerMap.get(service.providerId) ?? null)
             : null;
         const stat = ratingStats.get(service.id);
-        const rating =
-          stat && stat.count > 0 ? stat.total / stat.count : null;
+        const rating = stat && stat.count > 0 ? stat.total / stat.count : null;
 
         return {
           ...service,
           rating,
           provider: provider
             ? {
-              // Include full provider details needed for address logic
-              id: provider.id,
-              name: provider.name,
-              phone: provider.phone,
-              profilePicture: provider.profilePicture,
-              addressStreet: provider.addressStreet,
-              addressCity: provider.addressCity,
-              addressState: provider.addressState,
-              addressPostalCode: provider.addressPostalCode,
-              addressCountry: provider.addressCountry,
-              latitude: provider.latitude,
-              longitude: provider.longitude,
-            }
+                // Include full provider details needed for address logic
+                id: provider.id,
+                name: provider.name,
+                phone: provider.phone,
+                profilePicture: provider.profilePicture,
+                addressStreet: provider.addressStreet,
+                addressCity: provider.addressCity,
+                addressState: provider.addressState,
+                addressPostalCode: provider.addressPostalCode,
+                addressCountry: provider.addressCountry,
+                latitude: provider.latitude,
+                longitude: provider.longitude,
+              }
             : null,
         };
       });
@@ -3664,15 +3653,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       logger.error("Error fetching services:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch services",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch services",
+      });
     }
   });
-
 
   const handleGlobalSearch: RequestHandler = async (req, res) => {
     try {
@@ -3719,127 +3705,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/search/global", handleGlobalSearch);
   app.get("/api/search", handleGlobalSearch);
 
-  app.get(
-    "/api/services/:id",
-    async (req, res) => {
-      try {
-        const serviceId = getValidatedParam(req, "id");
-        logger.debug({ serviceId }, "[API] /api/services/:id - Request received");
+  app.get("/api/services/:id", async (req, res) => {
+    try {
+      const serviceId = getValidatedParam(req, "id");
+      logger.debug({ serviceId }, "[API] /api/services/:id - Request received");
 
-        const cacheKey = `service_detail_${serviceId}`;
-        const cached = await getCache<ServiceDetail>(cacheKey);
-        if (cached) {
-          logger.debug("[API] /api/services/:id - returning cached response");
-          return res.json(cached);
-        }
-
-        const service = await storage.getService(serviceId);
-
-        if (!service) {
-          logger.debug(
-            { serviceId },
-            "[API] /api/services/:id - Service not found in storage",
-          );
-          return res.status(404).json({ message: "Service not found" });
-        }
-
-        const provider =
-          service.providerId !== null
-            ? await storage.getUser(service.providerId)
-            : null;
-        if (!provider) {
-          logger.debug(
-            { serviceId, providerId: service.providerId },
-            "[API] /api/services/:id - Provider not found",
-          );
-          return res
-            .status(404)
-            .json({ message: "Service provider not found" });
-        }
-
-        const reviews = await storage.getReviewsByService(serviceId);
-        const rating = reviews?.length
-          ? reviews.reduce((acc, review) => acc + review.rating, 0) /
-          reviews.length
-          : null;
-
-        const rawWorkingHours = (service as any).workingHours;
-        let workingHours = rawWorkingHours ?? null;
-        if (typeof rawWorkingHours === "string") {
-          try {
-            workingHours = JSON.parse(rawWorkingHours);
-          } catch (parseError) {
-            logger.warn(
-              { err: parseError },
-              "Failed to parse working hours JSON for service %d",
-              serviceId,
-            );
-            workingHours = null;
-          }
-        }
-
-        const breakSlots =
-          (service as any).breakTime ??
-          (service as any).breakTimes ??
-          null;
-
-        const payload = serviceDetailSchema.parse({
-          ...service,
-          workingHours,
-          breakTime: breakSlots,
-          rating,
-          provider: {
-            id: provider.id,
-            name: provider.name ?? null,
-            email: provider.email ?? null,
-            phone: provider.phone ?? null,
-            profilePicture: provider.profilePicture ?? null,
-            addressStreet: provider.addressStreet ?? null,
-            addressCity: provider.addressCity ?? null,
-            addressState: provider.addressState ?? null,
-            addressPostalCode: provider.addressPostalCode ?? null,
-            addressCountry: provider.addressCountry ?? null,
-            ...extractUserCoordinates(provider),
-          },
-          reviews: (reviews ?? []).map((review) => ({
-            id: review.id,
-            customerId: review.customerId ?? null,
-            serviceId: review.serviceId ?? null,
-            bookingId: review.bookingId ?? null,
-            rating: review.rating,
-            review: review.review ?? null,
-            createdAt:
-              review.createdAt instanceof Date
-                ? review.createdAt.toISOString()
-                : review.createdAt
-                  ? new Date(
-                    review.createdAt as unknown as string,
-                  ).toISOString()
-                  : null,
-            providerReply: review.providerReply ?? null,
-            isVerifiedService: review.isVerifiedService ?? undefined,
-          })),
-        });
-
-        logger.info(
-          "[API] /api/services/:id - Sending typed response",
-          payload,
-        );
-        await setCache(cacheKey, payload, SERVICE_DETAIL_CACHE_TTL_SECONDS);
-        res.json(payload);
-      } catch (error) {
-        logger.error("[API] Error in /api/services/:id:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch service",
-          });
+      const cacheKey = `service_detail_${serviceId}`;
+      const cached = await getCache<ServiceDetail>(cacheKey);
+      if (cached) {
+        logger.debug("[API] /api/services/:id - returning cached response");
+        return res.json(cached);
       }
-    },
-  );
+
+      const service = await storage.getService(serviceId);
+
+      if (!service || service.isDeleted) {
+        logger.debug(
+          { serviceId },
+          "[API] /api/services/:id - Service not found in storage",
+        );
+        return res.status(404).json({ message: "Service not found" });
+      }
+
+      const provider =
+        service.providerId !== null
+          ? await storage.getUser(service.providerId)
+          : null;
+      if (!provider) {
+        logger.debug(
+          { serviceId, providerId: service.providerId },
+          "[API] /api/services/:id - Provider not found",
+        );
+        return res.status(404).json({ message: "Service provider not found" });
+      }
+
+      const reviews = await storage.getReviewsByService(serviceId);
+      const rating = reviews?.length
+        ? reviews.reduce((acc, review) => acc + review.rating, 0) /
+          reviews.length
+        : null;
+
+      const rawWorkingHours = (service as any).workingHours;
+      let workingHours = rawWorkingHours ?? null;
+      if (typeof rawWorkingHours === "string") {
+        try {
+          workingHours = JSON.parse(rawWorkingHours);
+        } catch (parseError) {
+          logger.warn(
+            { err: parseError },
+            "Failed to parse working hours JSON for service %d",
+            serviceId,
+          );
+          workingHours = null;
+        }
+      }
+
+      const breakSlots =
+        (service as any).breakTime ?? (service as any).breakTimes ?? null;
+
+      const payload = serviceDetailSchema.parse({
+        ...service,
+        workingHours,
+        breakTime: breakSlots,
+        rating,
+        provider: {
+          id: provider.id,
+          name: provider.name ?? null,
+          email: provider.email ?? null,
+          phone: provider.phone ?? null,
+          profilePicture: provider.profilePicture ?? null,
+          addressStreet: provider.addressStreet ?? null,
+          addressCity: provider.addressCity ?? null,
+          addressState: provider.addressState ?? null,
+          addressPostalCode: provider.addressPostalCode ?? null,
+          addressCountry: provider.addressCountry ?? null,
+          ...extractUserCoordinates(provider),
+        },
+        reviews: (reviews ?? []).map((review) => ({
+          id: review.id,
+          customerId: review.customerId ?? null,
+          serviceId: review.serviceId ?? null,
+          bookingId: review.bookingId ?? null,
+          rating: review.rating,
+          review: review.review ?? null,
+          createdAt:
+            review.createdAt instanceof Date
+              ? review.createdAt.toISOString()
+              : review.createdAt
+                ? new Date(review.createdAt as unknown as string).toISOString()
+                : null,
+          providerReply: review.providerReply ?? null,
+          isVerifiedService: review.isVerifiedService ?? undefined,
+        })),
+      });
+
+      logger.info("[API] /api/services/:id - Sending typed response", payload);
+      await setCache(cacheKey, payload, SERVICE_DETAIL_CACHE_TTL_SECONDS);
+      res.json(payload);
+    } catch (error) {
+      logger.error("[API] Error in /api/services/:id:", error);
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch service",
+      });
+    }
+  });
 
   // Add these endpoints after the existing service routes
   app.get("/api/services/:id/blocked-slots", requireAuth, async (req, res) => {
@@ -3847,7 +3817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const serviceId = getValidatedParam(req, "id");
       const service = await storage.getService(serviceId);
 
-      if (!service) {
+      if (!service || service.isDeleted) {
         return res.status(404).json({ message: "Service not found" });
       }
 
@@ -3855,14 +3825,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(blockedSlots);
     } catch (error) {
       logger.error("Error fetching blocked slots:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch blocked slots",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch blocked slots",
+      });
     }
   });
 
@@ -3875,7 +3843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const serviceId = getValidatedParam(req, "id");
         const service = await storage.getService(serviceId);
 
-        if (!service) {
+        if (!service || service.isDeleted) {
           return res.status(404).json({ message: "Service not found" });
         }
 
@@ -3891,9 +3859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         if (!result.success) {
-          return res
-            .status(400)
-            .json(formatValidationError(result.error));
+          return res.status(400).json(formatValidationError(result.error));
         }
 
         // Ensure serviceId is a number by overriding the value from the schema if necessary
@@ -3921,14 +3887,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json(blockedSlot);
       } catch (error) {
         logger.error("Error blocking time slot:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to block time slot",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to block time slot",
+        });
       }
     },
   );
@@ -3943,7 +3907,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const slotId = getValidatedParam(req, "slotId");
 
         const service = await storage.getService(serviceId);
-        if (!service) {
+        if (!service || service.isDeleted) {
           return res.status(404).json({ message: "Service not found" });
         }
 
@@ -3957,14 +3921,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.sendStatus(200);
       } catch (error) {
         logger.error("Error unblocking time slot:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to unblock time slot",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to unblock time slot",
+        });
       }
     },
   );
@@ -3984,7 +3946,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const service = await storage.getService(serviceId);
 
-        if (!service) {
+        if (!service || service.isDeleted) {
           logger.info("[API] /api/services/:id DELETE - Service not found");
           return res.status(404).json({ message: "Service not found" });
         }
@@ -4008,23 +3970,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           res.status(200).json({ message: "Service deleted successfully" });
         } catch (error) {
           logger.error("[API] Error deleting service:", error);
-          res
-            .status(400)
-            .json({
-              message:
-                "Failed to delete service due to existing bookings. Please mark the service as unavailable instead.",
-            });
+          res.status(400).json({
+            message:
+              "Failed to delete service due to existing bookings. Please mark the service as unavailable instead.",
+          });
         }
       } catch (error) {
         logger.error("[API] Error deleting service:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to delete service",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to delete service",
+        });
       }
     },
   );
@@ -4036,11 +3992,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireRole(["customer"]),
     async (req, res) => {
       if (
-        !ensureProfileVerified(
-          req as RequestWithAuth,
-          res,
-          "book services",
-        )
+        !ensureProfileVerified(req as RequestWithAuth, res, "book services")
       ) {
         return;
       }
@@ -4056,17 +4008,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           timeSlotLabel === null ? undefined : timeSlotLabel;
 
         if (serviceLocation === "customer") {
-          const landmark = String((req.user as any)?.addressLandmark ?? "").trim();
+          const landmark = String(
+            (req.user as any)?.addressLandmark ?? "",
+          ).trim();
           if (!landmark) {
             return res.status(400).json({
-              message: "Landmark is required for bookings at customer location.",
+              message:
+                "Landmark is required for bookings at customer location.",
             });
           }
         }
 
         // Get service details
         const service = await storage.getService(serviceId);
-        if (!service) {
+        if (!service || service.isDeleted) {
           return res.status(404).json({ message: "Service not found" });
         }
 
@@ -4140,14 +4095,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json({ booking, paymentRequired: false });
       } catch (error) {
         logger.error("Error creating booking:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create booking",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to create booking",
+        });
       }
     },
   );
@@ -4162,12 +4113,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!parsedBody.success) {
           return res.status(400).json(formatValidationError(parsedBody.error));
         }
-        const {
-          status,
-          rejectionReason,
-          rescheduleDate,
-          rescheduleReason,
-        } = parsedBody.data;
+        const { status, rejectionReason, rescheduleDate, rescheduleReason } =
+          parsedBody.data;
         const bookingId = getValidatedParam(req, "id");
 
         logger.info(
@@ -4249,8 +4196,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updateData.rescheduleDate = null;
 
           notificationTitle = "Booking Rejected";
-          notificationMessage = `Your booking for ${serviceName} was rejected.${rejectionReason ? ` Reason: ${rejectionReason}` : ""
-            }`;
+          notificationMessage = `Your booking for ${serviceName} was rejected.${
+            rejectionReason ? ` Reason: ${rejectionReason}` : ""
+          }`;
           responseMessage =
             "Booking rejected. Customer has been notified with the reason.";
         } else {
@@ -4296,14 +4244,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error) {
         logger.error("Error updating booking status:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update booking status",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update booking status",
+        });
       }
     },
   );
@@ -4350,11 +4296,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const notification = booking.customerId
           ? {
-            userId: booking.customerId,
-            type: "booking_update",
-            title: "Provider En Route",
-            message: "Your provider has started the trip and is on the way.",
-          }
+              userId: booking.customerId,
+              type: "booking_update",
+              title: "Provider En Route",
+              message: "Your provider has started the trip and is on the way.",
+            }
           : null;
 
         const updatedBooking = await storage.updateBooking(
@@ -4369,14 +4315,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } catch (error) {
         logger.error("Error updating booking to en route:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to mark booking as en route",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to mark booking as en route",
+        });
       }
     },
   );
@@ -4437,14 +4381,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ booking: updatedBooking });
       } catch (error) {
         logger.error("Error completing service by provider:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to complete service",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to complete service",
+        });
       }
     },
   );
@@ -4533,14 +4475,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ booking: updatedBooking });
       } catch (error) {
         logger.error("Error submitting payment:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to submit payment",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to submit payment",
+        });
       }
     },
   );
@@ -4575,14 +4513,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ booking: updatedBooking });
       } catch (error) {
         logger.error("Error updating payment reference:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update reference",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update reference",
+        });
       }
     },
   );
@@ -4658,11 +4594,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const enrichedBookings = bookings.map((booking) => {
           const service =
             typeof booking.serviceId === "number"
-              ? serviceMap.get(booking.serviceId) ?? null
+              ? (serviceMap.get(booking.serviceId) ?? null)
               : null;
           const provider =
             service && typeof service.providerId === "number"
-              ? providerMap.get(service.providerId) ?? null
+              ? (providerMap.get(service.providerId) ?? null)
               : null;
 
           let displayAddress: string | null = null;
@@ -4670,14 +4606,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const providerAddressParts =
               provider !== null
                 ? [
-                  provider.addressStreet,
-                  provider.addressCity,
-                  provider.addressState,
-                ]
-                  .map((part) =>
-                    typeof part === "string" ? part.trim() : "",
-                  )
-                  .filter((part) => part.length > 0)
+                    provider.addressStreet,
+                    provider.addressCity,
+                    provider.addressState,
+                  ]
+                    .map((part) =>
+                      typeof part === "string" ? part.trim() : "",
+                    )
+                    .filter((part) => part.length > 0)
                 : [];
             const providerAddress = providerAddressParts.join(", ");
             displayAddress =
@@ -4698,18 +4634,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             displayAddress,
             provider: provider
               ? {
-                id: provider.id,
-                name: provider.name,
-                phone: provider.phone,
-                upiId: (provider as any).upiId ?? null,
-                upiQrCodeUrl: (provider as any).upiQrCodeUrl ?? null,
-                addressStreet: provider.addressStreet,
-                addressCity: provider.addressCity,
-                addressState: provider.addressState,
-                addressPostalCode: provider.addressPostalCode,
-                addressCountry: provider.addressCountry,
-                ...extractUserCoordinates(provider),
-              }
+                  id: provider.id,
+                  name: provider.name,
+                  phone: provider.phone,
+                  upiId: (provider as any).upiId ?? null,
+                  upiQrCodeUrl: (provider as any).upiQrCodeUrl ?? null,
+                  addressStreet: provider.addressStreet,
+                  addressCity: provider.addressCity,
+                  addressState: provider.addressState,
+                  addressPostalCode: provider.addressPostalCode,
+                  addressCountry: provider.addressCountry,
+                  ...extractUserCoordinates(provider),
+                }
               : null,
           };
         });
@@ -4717,14 +4653,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(enrichedBookings);
       } catch (error) {
         logger.error("Error fetching customer bookings:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch bookings",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch bookings",
+        });
       }
     },
   );
@@ -4739,7 +4671,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
 
-        const { data: bookings, total, totalPages } = await storage.getBookingsByProvider(req.user!.id, { page, limit });
+        const {
+          data: bookings,
+          total,
+          totalPages,
+        } = await storage.getBookingsByProvider(req.user!.id, { page, limit });
         const enrichedBookings = await hydrateProviderBookings(bookings);
 
         res.json({
@@ -4748,19 +4684,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             total,
             totalPages,
             page,
-            limit
-          }
+            limit,
+          },
         });
       } catch (error) {
         logger.error("Error fetching provider bookings:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch bookings",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch bookings",
+        });
       }
     },
   );
@@ -4782,7 +4714,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 20;
 
-        const { data: bookings, total, totalPages } = await storage.getBookingsByProvider(providerId, { page, limit });
+        const {
+          data: bookings,
+          total,
+          totalPages,
+        } = await storage.getBookingsByProvider(providerId, { page, limit });
         const enrichedBookings = await hydrateProviderBookings(bookings);
         res.json({
           data: enrichedBookings,
@@ -4790,19 +4726,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             total,
             totalPages,
             page,
-            limit
-          }
+            limit,
+          },
         });
       } catch (error) {
         logger.error("Error fetching provider bookings:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch bookings",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch bookings",
+        });
       }
     },
   );
@@ -4828,14 +4760,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(bookings);
       } catch (error) {
         logger.error("Error fetching customer bookings:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch bookings",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch bookings",
+        });
       }
     },
   );
@@ -4904,14 +4832,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const quantity = Number(item.quantity) || 1;
           const orderTimestamp = orderDateById.get(item.orderId ?? -1) ?? 0;
           const shopId = orderShopById.get(item.orderId ?? -1) ?? null;
-          const current =
-            productFrequency.get(productId) ?? {
-              count: 0,
-              lastTimestamp: 0,
-              shopId,
-            };
+          const current = productFrequency.get(productId) ?? {
+            count: 0,
+            lastTimestamp: 0,
+            shopId,
+          };
           current.count += quantity;
-          current.lastTimestamp = Math.max(current.lastTimestamp, orderTimestamp);
+          current.lastTimestamp = Math.max(
+            current.lastTimestamp,
+            orderTimestamp,
+          );
           current.shopId = current.shopId ?? shopId ?? null;
           productFrequency.set(productId, current);
         }
@@ -4926,11 +4856,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const timestamp =
             parseTimestamp(booking.bookingDate ?? booking.updatedAt) ??
             parseTimestamp(booking.createdAt);
-          const current =
-            bookingFrequency.get(booking.serviceId) ?? {
-              count: 0,
-              lastTimestamp: 0,
-            };
+          const current = bookingFrequency.get(booking.serviceId) ?? {
+            count: 0,
+            lastTimestamp: 0,
+          };
           current.count += 1;
           current.lastTimestamp = Math.max(current.lastTimestamp, timestamp);
           bookingFrequency.set(booking.serviceId, current);
@@ -4975,7 +4904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const stat = productFrequency.get(product.id);
             if (!stat) return null;
             const shop = product.shopId
-              ? shopMap.get(product.shopId) ?? null
+              ? (shopMap.get(product.shopId) ?? null)
               : null;
             const lastOrderedAt =
               stat.lastTimestamp > 0
@@ -4987,7 +4916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               name: product.name ?? null,
               price: product.price ?? null,
               image: Array.isArray(product.images)
-                ? product.images[0] ?? null
+                ? (product.images[0] ?? null)
                 : null,
               timesOrdered: stat.count,
               lastOrderedAt,
@@ -5013,7 +4942,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const stat = bookingFrequency.get(service.id);
             if (!stat) return null;
             const provider = service.providerId
-              ? providerMap.get(service.providerId) ?? null
+              ? (providerMap.get(service.providerId) ?? null)
               : null;
             const lastBookedAt =
               stat.lastTimestamp > 0
@@ -5025,7 +4954,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               name: service.name ?? null,
               price: service.price ?? null,
               image: Array.isArray(service.images)
-                ? service.images[0] ?? null
+                ? (service.images[0] ?? null)
                 : null,
               timesBooked: stat.count,
               lastBookedAt,
@@ -5091,14 +5020,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.sendStatus(200);
       } catch (error) {
         logger.error("Error joining waitlist:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to join waitlist",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to join waitlist",
+        });
       }
     },
   );
@@ -5118,12 +5043,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.addToCart(req.user!.id, productId, quantity);
         res.json({ success: true });
       } catch (error) {
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error ? error.message : "Failed to add to cart",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to add to cart",
+        });
       }
     },
   );
@@ -5140,14 +5063,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         res.json({ success: true });
       } catch (error) {
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to remove from cart",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to remove from cart",
+        });
       }
     },
   );
@@ -5161,12 +5082,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const cart = await storage.getCart(req.user!.id);
         res.json(cart);
       } catch (error) {
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error ? error.message : "Failed to get cart",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to get cart",
+        });
       }
     },
   );
@@ -5187,14 +5106,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ success: true }); // Send proper JSON response
       } catch (error) {
         logger.error("Error adding to wishlist:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update wishlist",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update wishlist",
+        });
       }
     },
   );
@@ -5212,14 +5129,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.sendStatus(200);
       } catch (error) {
         logger.error("Error removing from wishlist:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update wishlist",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update wishlist",
+        });
       }
     },
   );
@@ -5234,14 +5149,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(wishlist);
       } catch (error) {
         logger.error("Error fetching wishlist:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch wishlist",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch wishlist",
+        });
       }
     },
   );
@@ -5255,9 +5166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const result = insertReviewSchema.safeParse(req.body);
         if (!result.success) {
-          return res
-            .status(400)
-            .json(formatValidationError(result.error));
+          return res.status(400).json(formatValidationError(result.error));
         }
 
         const { serviceId, bookingId, rating, review } = result.data;
@@ -5322,12 +5231,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json(newReview);
       } catch (error) {
         logger.error("Error saving review:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error ? error.message : "Failed to save review",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to save review",
+        });
       }
     },
   );
@@ -5366,13 +5273,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Update the review
-        const updatedReview = await storage.updateReview(reviewId, updatePayload);
+        const updatedReview = await storage.updateReview(
+          reviewId,
+          updatePayload,
+        );
 
         // Invalidate caches
         if (existingReview.serviceId) {
           const service = await storage.getService(existingReview.serviceId);
           if (service) {
-            await invalidateCache(`reviews:service:${existingReview.serviceId}`);
+            await invalidateCache(
+              `reviews:service:${existingReview.serviceId}`,
+            );
             if (service.providerId) {
               await invalidateCache(`reviews:provider:${service.providerId}`);
             }
@@ -5382,49 +5294,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updatedReview);
       } catch (error) {
         logger.error("Error updating review:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update review",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to update review",
+        });
       }
     },
   );
 
   app.get("/api/reviews/service/:id", async (req, res) => {
     try {
-      const reviews = await storage.getReviewsByService(getValidatedParam(req, "id"));
+      const reviews = await storage.getReviewsByService(
+        getValidatedParam(req, "id"),
+      );
       res.json(reviews);
     } catch (error) {
       logger.error("Error fetching service reviews:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch reviews",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch reviews",
+      });
     }
   });
 
   app.get("/api/reviews/provider/:id", async (req, res) => {
     try {
-      const reviews = await storage.getReviewsByProvider(getValidatedParam(req, "id"));
+      const reviews = await storage.getReviewsByProvider(
+        getValidatedParam(req, "id"),
+      );
       res.json(reviews);
     } catch (error) {
       logger.error("Error fetching provider reviews:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch reviews",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch reviews",
+      });
     }
   });
 
@@ -5451,11 +5355,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Get the service to verify ownership
         const service = await storage.getService(review.serviceId!);
         if (!service || service.providerId !== req.user!.id) {
-          return res
-            .status(403)
-            .json({
-              message: "You can only reply to reviews for your own services",
-            });
+          return res.status(403).json({
+            message: "You can only reply to reviews for your own services",
+          });
         }
 
         // Update the review with the provider's reply
@@ -5474,14 +5376,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updatedReview);
       } catch (error) {
         logger.error("Error replying to review:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to reply to review",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to reply to review",
+        });
       }
     },
   );
@@ -5498,14 +5398,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(notifications);
     } catch (error) {
       logger.error("Error fetching notifications:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch notifications",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch notifications",
+      });
     }
   });
 
@@ -5517,18 +5415,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.status(200).json({ success: true });
     } catch (error) {
-      if (error instanceof Error && error.message === "Notification not found") {
+      if (
+        error instanceof Error &&
+        error.message === "Notification not found"
+      ) {
         return res.status(404).json({ message: "Notification not found" });
       }
       logger.error("Error marking notification as read:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to update notification",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to update notification",
+      });
     }
   });
 
@@ -5546,14 +5445,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(200).json({ success: true });
       } catch (error) {
         logger.error("Error marking notifications as read:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update notifications",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update notifications",
+        });
       }
     },
   );
@@ -5566,27 +5463,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       res.status(200).json({ success: true });
     } catch (error) {
-      if (error instanceof Error && error.message === "Notification not found") {
+      if (
+        error instanceof Error &&
+        error.message === "Notification not found"
+      ) {
         return res.status(404).json({ message: "Notification not found" });
       }
       logger.error("Error deleting notification:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to delete notification",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to delete notification",
+      });
     }
   });
 
   // ─── FCM Token Registration for Push Notifications ─────────────────
-  const fcmTokenSchema = z.object({
-    token: z.string().min(10, "Invalid FCM token"),
-    platform: z.enum(["android", "web"]),
-    deviceInfo: z.string().optional(),
-  }).strict();
+  const fcmTokenSchema = z
+    .object({
+      token: z.string().min(10, "Invalid FCM token"),
+      platform: z.enum(["android", "web"]),
+      deviceInfo: z.string().optional(),
+    })
+    .strict();
 
   /**
    * Register FCM token for push notifications
@@ -5607,10 +5507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deviceInfo: deviceInfo || null,
       });
 
-      logger.info(
-        { userId: req.user!.id, platform },
-        "FCM token registered"
-      );
+      logger.info({ userId: req.user!.id, platform }, "FCM token registered");
 
       res.json({ success: true });
     } catch (error) {
@@ -5628,9 +5525,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * Unregister FCM token (on logout)
    */
   app.delete("/api/fcm/unregister", requireAuth, async (req, res) => {
-    const tokenSchema = z.object({
-      token: z.string().min(10, "Invalid FCM token"),
-    }).strict();
+    const tokenSchema = z
+      .object({
+        token: z.string().min(10, "Invalid FCM token"),
+      })
+      .strict();
 
     const parsed = tokenSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -5658,13 +5557,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireAuth,
     requireRole(["customer"]),
     async (req, res) => {
-      if (
-        !ensureProfileVerified(
-          req as RequestWithAuth,
-          res,
-          "place orders",
-        )
-      ) {
+      if (!ensureProfileVerified(req as RequestWithAuth, res, "place orders")) {
         return;
       }
       try {
@@ -5690,9 +5583,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const result = orderSchema.safeParse(req.body);
         if (!result.success) {
-          return res
-            .status(400)
-            .json(formatValidationError(result.error));
+          return res.status(400).json(formatValidationError(result.error));
         }
 
         const {
@@ -5706,19 +5597,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } = result.data;
 
         if (deliveryMethod === "delivery" && paymentMethod === "cash") {
-          return res
-            .status(400)
-            .json({
-              message: "Cash payment only available for pickup orders",
-            });
+          return res.status(400).json({
+            message: "Cash payment only available for pickup orders",
+          });
         }
 
         // Validate products, stock, and ensure all items are from same shop
-        const productIds = Array.from(new Set(items.map((item) => item.productId)));
+        const productIds = Array.from(
+          new Set(items.map((item) => item.productId)),
+        );
         const products = productIds.length
           ? await storage.getProductsByIds(productIds)
           : [];
-        const productMap = new Map(products.map((product) => [product.id, product]));
+        const productMap = new Map(
+          products.map((product) => [product.id, product]),
+        );
 
         const missingProducts = productIds.filter((id) => !productMap.has(id));
         if (missingProducts.length > 0) {
@@ -5746,7 +5639,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (productShopId == null) {
             return res
               .status(400)
-              .json({ message: `Product with ID ${item.productId} has no shop` });
+              .json({
+                message: `Product with ID ${item.productId} has no shop`,
+              });
           }
 
           if (shopId == null) {
@@ -5780,12 +5675,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const enforceStock = trackInventory && !shopModes.openOrderMode;
 
         if (enforceStock) {
-          const insufficientEntry = Array.from(quantityByProduct.entries()).find(
-            ([productId, totalQuantity]) => {
-              const product = productMap.get(productId);
-              return product ? Number(product.stock ?? 0) < totalQuantity : true;
-            },
-          );
+          const insufficientEntry = Array.from(
+            quantityByProduct.entries(),
+          ).find(([productId, totalQuantity]) => {
+            const product = productMap.get(productId);
+            return product ? Number(product.stock ?? 0) < totalQuantity : true;
+          });
           if (insufficientEntry) {
             const [productId] = insufficientEntry;
             const product = productMap.get(productId);
@@ -5800,7 +5695,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const optionalToNumber = (value: string | number | undefined) =>
           value === undefined ? undefined : toNumber(value);
         const toNonNegativeNumber = (value: unknown) => {
-          const numericValue = typeof value === "number" ? value : Number(value);
+          const numericValue =
+            typeof value === "number" ? value : Number(value);
           if (!Number.isFinite(numericValue) || numericValue < 0) {
             return 0;
           }
@@ -5942,7 +5838,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .json({ message: "This promotion has reached its usage limit" });
           }
 
-          const minPurchaseValue = toNonNegativeNumber(promotion.minPurchase ?? 0);
+          const minPurchaseValue = toNonNegativeNumber(
+            promotion.minPurchase ?? 0,
+          );
           if (minPurchaseValue > 0 && subtotalValue < minPurchaseValue) {
             return res.status(400).json({
               message: `Minimum purchase of ₹${minPurchaseValue} required for this promotion`,
@@ -5981,7 +5879,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           const promotionValue = toNonNegativeNumber(promotion.value);
           if (promotion.type === "percentage") {
-            promotionDiscountValue = (applicableSubtotal * promotionValue) / 100;
+            promotionDiscountValue =
+              (applicableSubtotal * promotionValue) / 100;
           } else {
             promotionDiscountValue = promotionValue;
           }
@@ -6014,13 +5913,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           Math.abs(discountFromRequest - promotionDiscountValue) > 0.01
         ) {
           return res.status(400).json({
-            message: "Discount mismatch. Please review your cart and try again.",
+            message:
+              "Discount mismatch. Please review your cart and try again.",
             expectedDiscount: promotionDiscountValue.toFixed(2),
           });
         }
 
         const computedTotalRaw =
-          subtotalValue - promotionDiscountValue + PLATFORM_SERVICE_FEE + deliveryFeeAmount;
+          subtotalValue -
+          promotionDiscountValue +
+          PLATFORM_SERVICE_FEE +
+          deliveryFeeAmount;
         if (!Number.isFinite(computedTotalRaw)) {
           return res.status(400).json({ message: "Invalid order amount" });
         }
@@ -6043,7 +5946,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `Order total mismatch for user ${req.user!.id}: requested ${requestedTotalValue}, computed ${computedTotal}`,
           );
           return res.status(400).json({
-            message: "Order total mismatch. Please review your cart and try again.",
+            message:
+              "Order total mismatch. Please review your cart and try again.",
             expectedTotal: totalAsString,
           });
         }
@@ -6139,18 +6043,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
               notes:
                 shopModes.openOrderMode || isPayLater
                   ? [
-                    shopModes.openOrderMode
-                      ? "Open order: shop owner will confirm availability."
-                      : null,
-                    isPayLater
-                      ? `Pay later requested by ${payLaterEligibility?.isWhitelisted
-                        ? "whitelisted customer"
-                        : "known customer"
-                      }. Pending approval.`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" ")
+                      shopModes.openOrderMode
+                        ? "Open order: shop owner will confirm availability."
+                        : null,
+                      isPayLater
+                        ? `Pay later requested by ${
+                            payLaterEligibility?.isWhitelisted
+                              ? "whitelisted customer"
+                              : "known customer"
+                          }. Pending approval.`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
                   : undefined,
             },
             orderItemsPayload,
@@ -6231,12 +6136,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(201).json({ order: newOrder });
       } catch (error) {
         logger.error("Order creation error:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error ? error.message : "Failed to create order",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to create order",
+        });
       }
     },
   );
@@ -6245,7 +6148,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     .object({
       shopId: z.number().int().positive(),
       orderText: z.string().trim().min(3).max(2000),
-      deliveryMethod: z.enum(["delivery", "pickup"]).optional().default("pickup"),
+      deliveryMethod: z
+        .enum(["delivery", "pickup"])
+        .optional()
+        .default("pickup"),
     })
     .strict();
 
@@ -6254,13 +6160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireAuth,
     requireRole(["customer"]),
     async (req, res) => {
-      if (
-        !ensureProfileVerified(
-          req as RequestWithAuth,
-          res,
-          "place orders",
-        )
-      ) {
+      if (!ensureProfileVerified(req as RequestWithAuth, res, "place orders")) {
         return;
       }
 
@@ -6390,14 +6290,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(detailed);
       } catch (error) {
         logger.error("Error fetching customer orders:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch orders",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch orders",
+        });
       }
     },
   );
@@ -6468,14 +6364,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Shop not found" });
         }
 
-        const whitelistIds = normalizePayLaterWhitelist(shop.shopProfile ?? null);
+        const whitelistIds = normalizePayLaterWhitelist(
+          shop.shopProfile ?? null,
+        );
         const customers = await buildWhitelistResponse(
           whitelistIds,
           shopContextId,
         );
 
         return res.json({
-          allowPayLater: resolveShopModes(shop.shopProfile ?? null).allowPayLater,
+          allowPayLater: resolveShopModes(shop.shopProfile ?? null)
+            .allowPayLater,
           customers,
           payLaterWhitelist: whitelistIds,
         });
@@ -6524,7 +6423,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "Customer not found for Pay Later whitelist" });
         }
 
-        const whitelistIds = normalizePayLaterWhitelist(shop.shopProfile ?? null);
+        const whitelistIds = normalizePayLaterWhitelist(
+          shop.shopProfile ?? null,
+        );
         if (!whitelistIds.includes(customer.id)) {
           const updatedProfile = {
             ...(shop.shopProfile ?? {}),
@@ -6542,7 +6443,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         return res.json({
-          allowPayLater: resolveShopModes(shop.shopProfile ?? null).allowPayLater,
+          allowPayLater: resolveShopModes(shop.shopProfile ?? null)
+            .allowPayLater,
           customers,
           payLaterWhitelist: whitelistIds,
         });
@@ -6575,14 +6477,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Shop not found" });
         }
 
-        const whitelistIds = normalizePayLaterWhitelist(shop.shopProfile ?? null);
+        const whitelistIds = normalizePayLaterWhitelist(
+          shop.shopProfile ?? null,
+        );
         const updatedWhitelist = whitelistIds.filter((id) => id !== customerId);
 
         const updatedProfile = {
           ...(shop.shopProfile ?? {}),
           payLaterWhitelist: updatedWhitelist,
         } as ShopProfile;
-        await storage.updateUser(shopContextId, { shopProfile: updatedProfile });
+        await storage.updateUser(shopContextId, {
+          shopProfile: updatedProfile,
+        });
 
         const customers = await buildWhitelistResponse(
           updatedWhitelist,
@@ -6590,7 +6496,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         return res.json({
-          allowPayLater: resolveShopModes(shop.shopProfile ?? null).allowPayLater,
+          allowPayLater: resolveShopModes(shop.shopProfile ?? null)
+            .allowPayLater,
           customers,
           payLaterWhitelist: updatedWhitelist,
         });
@@ -6611,13 +6518,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
 
-        const activeOrders = await storage.getOrdersByShop(shopContextId, ACTIVE_ORDER_STATUSES);
+        const activeOrders = await storage.getOrdersByShop(
+          shopContextId,
+          ACTIVE_ORDER_STATUSES,
+        );
 
         if (activeOrders.length === 0) {
-          return res.json({ new: [], packing: [], ready: [] } as ActiveOrderBoard);
+          return res.json({
+            new: [],
+            packing: [],
+            ready: [],
+          } as ActiveOrderBoard);
         }
 
         const orderIds = activeOrders.map((order) => order.id);
@@ -6645,7 +6561,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           productIds.length > 0
             ? await storage.getProductsByIds(productIds)
             : [];
-        const productMap = new Map(products.map((product) => [product.id, product]));
+        const productMap = new Map(
+          products.map((product) => [product.id, product]),
+        );
 
         const customerIds = Array.from(
           new Set(
@@ -6700,7 +6618,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderDate:
               order.orderDate instanceof Date
                 ? order.orderDate.toISOString()
-                : order.orderDate ?? null,
+                : (order.orderDate ?? null),
             customerName: customer?.name ?? null,
             items: condensedItems,
           });
@@ -6717,14 +6635,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(board);
       } catch (error) {
         logger.error("Error fetching active shop orders:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch active orders",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch active orders",
+        });
       }
     },
   );
@@ -6737,7 +6653,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         const start = performance.now();
         const orders = await storage.getRecentOrdersByShop(shopContextId);
@@ -6760,14 +6678,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(detailed);
       } catch (error) {
         logger.error("Error fetching recent shop orders:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch orders",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch orders",
+        });
       }
     },
   );
@@ -6797,12 +6711,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ];
 
         const rawStatus = parsedQuery.data.status?.toLowerCase();
-        const normalizedStatus =
-          rawStatus === "all_orders" ? "all" : rawStatus;
+        const normalizedStatus = rawStatus === "all_orders" ? "all" : rawStatus;
 
         let statusFilter: Order["status"] | undefined;
         if (normalizedStatus && normalizedStatus !== "all") {
-          if (allowedOrderStatus.includes(normalizedStatus as Order["status"])) {
+          if (
+            allowedOrderStatus.includes(normalizedStatus as Order["status"])
+          ) {
             statusFilter = normalizedStatus as Order["status"];
           } else {
             return res.status(400).json({ message: "Invalid status filter" });
@@ -6810,7 +6725,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         const start = performance.now();
         const orders = await storage.getOrdersByShop(
@@ -6837,14 +6754,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(detailed);
       } catch (error) {
         logger.error("Error fetching shop orders:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch orders",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch orders",
+        });
       }
     },
   );
@@ -6903,16 +6816,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ),
       );
       const products =
-        productIds.length > 0
-          ? await storage.getProductsByIds(productIds)
-          : [];
+        productIds.length > 0 ? await storage.getProductsByIds(productIds) : [];
       const productMap = new Map(
         products.map((product) => [product.id, product]),
       );
       const items = orderItems.map((item) => {
         const product =
           item.productId !== null
-            ? productMap.get(item.productId) ?? null
+            ? (productMap.get(item.productId) ?? null)
             : null;
         const mrpValue = product?.mrp ?? null;
         const discountValue = item.discount ?? null;
@@ -6939,9 +6850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         relatedUserIds.length > 0
           ? await storage.getUsersByIds(relatedUserIds)
           : [];
-      const userMap = new Map(
-        relatedUsers.map((user) => [user.id, user]),
-      );
+      const userMap = new Map(relatedUsers.map((user) => [user.id, user]));
       const customer =
         typeof order.customerId === "number"
           ? userMap.get(order.customerId)
@@ -6967,10 +6876,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return sum + lineTotal;
       }, 0);
       const totalValue = Number(order.total ?? 0);
-      const discountValue =
-        Number.isFinite(totalValue)
-          ? itemsSubtotal + deliveryFeeValue + PLATFORM_SERVICE_FEE - totalValue
-          : 0;
+      const discountValue = Number.isFinite(totalValue)
+        ? itemsSubtotal + deliveryFeeValue + PLATFORM_SERVICE_FEE - totalValue
+        : 0;
       const discount =
         Number.isFinite(discountValue) && discountValue > 0
           ? discountValue.toFixed(2)
@@ -6981,11 +6889,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderDate:
           order.orderDate instanceof Date
             ? order.orderDate.toISOString()
-            : order.orderDate ?? null,
+            : (order.orderDate ?? null),
         eReceiptGeneratedAt:
           order.eReceiptGeneratedAt instanceof Date
             ? order.eReceiptGeneratedAt.toISOString()
-            : order.eReceiptGeneratedAt ?? null,
+            : (order.eReceiptGeneratedAt ?? null),
         paymentReference: order.paymentReference ?? null,
         billingAddress: order.billingAddress ?? null,
         trackingInfo: order.trackingInfo ?? null,
@@ -6998,26 +6906,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items,
         customer: customer
           ? {
-            name: customer.name ?? null,
-            phone: customer.phone ?? null,
-            email: customer.email ?? null,
-            address: formatUserAddress(customer) ?? null,
-            ...extractUserCoordinates(customer),
-          }
+              name: customer.name ?? null,
+              phone: customer.phone ?? null,
+              email: customer.email ?? null,
+              address: formatUserAddress(customer) ?? null,
+              ...extractUserCoordinates(customer),
+            }
           : undefined,
         shop: shop
           ? {
-            name: shop.name ?? null,
-            phone: shop.phone ?? null,
-            email: shop.email ?? null,
-            address: formatUserAddress(shop) ?? null,
-            ...extractUserCoordinates(shop),
-            upiId: (shop as any).upiId ?? null,
-            returnsEnabled:
-              (shop as any).returnsEnabled === undefined
-                ? null
-                : Boolean((shop as any).returnsEnabled),
-          }
+              name: shop.name ?? null,
+              phone: shop.phone ?? null,
+              email: shop.email ?? null,
+              address: formatUserAddress(shop) ?? null,
+              ...extractUserCoordinates(shop),
+              upiId: (shop as any).upiId ?? null,
+              returnsEnabled:
+                (shop as any).returnsEnabled === undefined
+                  ? null
+                  : Boolean((shop as any).returnsEnabled),
+            }
           : undefined,
       });
 
@@ -7034,14 +6942,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
     } catch (error) {
       logger.error("Error fetching order details:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch order",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch order",
+      });
     }
   });
 
@@ -7085,14 +6989,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updated);
       } catch (error) {
         logger.error("Error submitting payment reference:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to submit payment reference",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to submit payment reference",
+        });
       }
     },
   );
@@ -7114,7 +7016,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         if (order.shopId !== shopContextId) {
           return res.status(403).json({ message: "Not authorized" });
@@ -7141,14 +7045,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updated);
       } catch (error) {
         logger.error("Error approving pay-later request:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to approve pay-later request",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to approve pay-later request",
+        });
       }
     },
   );
@@ -7184,7 +7086,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (order.shopId !== shopContextId) {
           return res.status(403).json({ message: "Not authorized" });
         }
-        if (!["pending", "awaiting_customer_agreement"].includes(order.status)) {
+        if (
+          !["pending", "awaiting_customer_agreement"].includes(order.status)
+        ) {
           return res.status(400).json({
             message: "Final bill can only be set before the customer agrees.",
           });
@@ -7263,7 +7167,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         const numericTotal = Number(order.total);
         if (!Number.isFinite(numericTotal) || numericTotal <= 0) {
-          return res.status(400).json({ message: "Final bill is not ready yet." });
+          return res
+            .status(400)
+            .json({ message: "Final bill is not ready yet." });
         }
 
         const updated = await storage.updateOrderStatus(orderId, "confirmed");
@@ -7315,21 +7221,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         if (order.orderType !== "text_order") {
           return res.status(400).json({
-            message: "Payment method updates are only supported for quick orders.",
+            message:
+              "Payment method updates are only supported for quick orders.",
           });
         }
         if (order.paymentStatus !== "pending") {
           return res.status(400).json({
-            message: "Payment method cannot be updated after payment has started.",
+            message:
+              "Payment method cannot be updated after payment has started.",
           });
         }
         if (order.status !== "confirmed") {
           return res.status(400).json({
-            message: "Please agree to the final bill before choosing a payment method.",
+            message:
+              "Please agree to the final bill before choosing a payment method.",
           });
         }
         if (order.shopId == null) {
-          return res.status(400).json({ message: "Shop information is missing" });
+          return res
+            .status(400)
+            .json({ message: "Shop information is missing" });
         }
 
         const paymentMethod = parsedBody.data.paymentMethod;
@@ -7372,7 +7283,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : "known customer";
           const payLaterLine = `Pay later requested by ${descriptor}. Pending approval.`;
           const existing = (order.notes ?? "").trim();
-          nextNotes = [existing || null, existing.includes(payLaterLine) ? null : payLaterLine]
+          nextNotes = [
+            existing || null,
+            existing.includes(payLaterLine) ? null : payLaterLine,
+          ]
             .filter(Boolean)
             .join("\n");
         }
@@ -7425,7 +7339,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ message: "Not authorized" });
         }
         if (order.status === "cancelled") {
-          return res.status(400).json({ message: "Order is already cancelled." });
+          return res
+            .status(400)
+            .json({ message: "Order is already cancelled." });
         }
         if (order.paymentStatus !== "pending") {
           return res.status(400).json({
@@ -7465,9 +7381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         logger.error("Error cancelling order:", error);
         return res.status(500).json({
           message:
-            error instanceof Error
-              ? error.message
-              : "Failed to cancel order",
+            error instanceof Error ? error.message : "Failed to cancel order",
         });
       }
     },
@@ -7484,7 +7398,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!order) return res.status(404).json({ message: "Order not found" });
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         if (order.shopId !== shopContextId)
           return res.status(403).json({ message: "Not authorized" });
@@ -7498,8 +7414,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         const isPayLater = order.paymentMethod === "pay_later";
         const canMarkPaid =
-          (order.paymentMethod === "upi" && order.paymentStatus === "verifying") ||
-          (order.paymentMethod === "cash" && order.paymentStatus === "pending") ||
+          (order.paymentMethod === "upi" &&
+            order.paymentStatus === "verifying") ||
+          (order.paymentMethod === "cash" &&
+            order.paymentStatus === "pending") ||
           (isPayLater &&
             (order.paymentStatus === "verifying" ||
               order.paymentStatus === "pending"));
@@ -7509,7 +7427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .status(400)
             .json({ message: "Order is not awaiting verification" });
         }
-        const nextStatus = order.status === "pending" ? "confirmed" : order.status;
+        const nextStatus =
+          order.status === "pending" ? "confirmed" : order.status;
         const updated = await storage.updateOrder(orderId, {
           paymentStatus: "paid",
           status: nextStatus,
@@ -7525,14 +7444,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updated);
       } catch (error) {
         logger.error("Error confirming payment:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to confirm payment",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to confirm payment",
+        });
       }
     },
   );
@@ -7555,46 +7472,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(slots);
     } catch (error) {
       logger.error("Error fetching service bookings:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch bookings",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch bookings",
+      });
     }
   });
 
-  app.get(
-    "/api/bookings/service/:id",
-    requireAuth,
-    async (req, res) => {
-      const parsedQuery = servicesAvailabilityQuerySchema.safeParse(req.query);
-      if (!parsedQuery.success) {
-        return res.status(400).json(formatValidationError(parsedQuery.error));
+  app.get("/api/bookings/service/:id", requireAuth, async (req, res) => {
+    const parsedQuery = servicesAvailabilityQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json(formatValidationError(parsedQuery.error));
+    }
+    const serviceId = getValidatedParam(req, "id");
+    const bookingDate = new Date(parsedQuery.data.date);
+    try {
+      const slots = await fetchServiceBookingSlots(serviceId, bookingDate);
+      if (!slots) {
+        return res.status(404).json({ message: "Service not found" });
       }
-      const serviceId = getValidatedParam(req, "id");
-      const bookingDate = new Date(parsedQuery.data.date);
-      try {
-        const slots = await fetchServiceBookingSlots(serviceId, bookingDate);
-        if (!slots) {
-          return res.status(404).json({ message: "Service not found" });
-        }
-        res.json(slots);
-      } catch (error) {
-        logger.error("Error fetching legacy service bookings route:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch bookings",
-          });
-      }
-    },
-  );
+      res.json(slots);
+    } catch (error) {
+      logger.error("Error fetching legacy service bookings route:", error);
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch bookings",
+      });
+    }
+  });
 
   // Enhanced booking routes with notifications
   app.post(
@@ -7609,21 +7514,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Booking not found" });
         }
         if (existingBooking.serviceId == null) {
-          return res.status(400).json({ message: "Booking is missing a service" });
+          return res
+            .status(400)
+            .json({ message: "Booking is missing a service" });
         }
         const service = await storage.getService(existingBooking.serviceId);
         if (!service || service.providerId !== req.user!.id) {
-          return res.status(403).json({ message: "Not authorized to confirm this booking" });
+          return res
+            .status(403)
+            .json({ message: "Not authorized to confirm this booking" });
         }
 
         const confirmationMessage = `Your booking for ${formatIndianDisplay(existingBooking.bookingDate, "date")} has been confirmed.`;
         const notification = existingBooking.customerId
           ? {
-            userId: existingBooking.customerId,
-            type: "booking",
-            title: "Booking Confirmed",
-            message: confirmationMessage,
-          }
+              userId: existingBooking.customerId,
+              type: "booking",
+              title: "Booking Confirmed",
+              message: confirmationMessage,
+            }
           : null;
 
         const booking = await storage.updateBooking(
@@ -7652,14 +7561,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(booking);
       } catch (error) {
         logger.error("Error confirming booking:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to confirm booking",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to confirm booking",
+        });
       }
     },
   );
@@ -7680,30 +7587,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (order.customerId === req.user.id) {
           const timeline = await storage.getOrderTimeline(orderId);
           return res.json(
-            orderTimelineEntrySchema
-              .array()
-              .parse(
-                timeline.map((entry) => ({
-                  ...entry,
-                  trackingInfo: entry.trackingInfo ?? null,
-                  timestamp:
-                    entry.timestamp instanceof Date
-                      ? entry.timestamp.toISOString()
-                      : new Date(entry.timestamp).toISOString(),
-                })),
-              ),
+            orderTimelineEntrySchema.array().parse(
+              timeline.map((entry) => ({
+                ...entry,
+                trackingInfo: entry.trackingInfo ?? null,
+                timestamp:
+                  entry.timestamp instanceof Date
+                    ? entry.timestamp.toISOString()
+                    : new Date(entry.timestamp).toISOString(),
+              })),
+            ),
           );
         }
       } catch (error) {
         logger.error("Error fetching customer order timeline:", error);
-        return res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch order timeline",
-          });
+        return res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch order timeline",
+        });
       }
       next();
     },
@@ -7722,29 +7625,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ message: "Not authorized" });
         const timeline = await storage.getOrderTimeline(orderId);
         res.json(
-          orderTimelineEntrySchema
-            .array()
-            .parse(
-              timeline.map((entry) => ({
-                ...entry,
-                trackingInfo: entry.trackingInfo ?? null,
-                timestamp:
-                  entry.timestamp instanceof Date
-                    ? entry.timestamp.toISOString()
-                    : new Date(entry.timestamp).toISOString(),
-              })),
-            ),
+          orderTimelineEntrySchema.array().parse(
+            timeline.map((entry) => ({
+              ...entry,
+              trackingInfo: entry.trackingInfo ?? null,
+              timestamp:
+                entry.timestamp instanceof Date
+                  ? entry.timestamp.toISOString()
+                  : new Date(entry.timestamp).toISOString(),
+            })),
+          ),
         );
       } catch (error) {
         logger.error("Error fetching order timeline for shop/worker:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch order timeline",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch order timeline",
+        });
       }
     },
   );
@@ -7769,7 +7668,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!order) return res.status(404).json({ message: "Order not found" });
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         if (order.shopId !== shopContextId) {
           return res.status(403).json({ message: "Not authorized" });
@@ -7779,7 +7680,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status !== "cancelled"
         ) {
           return res.status(400).json({
-            message: "Wait for customer agreement before updating the order status.",
+            message:
+              "Wait for customer agreement before updating the order status.",
           });
         }
 
@@ -7798,7 +7700,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Send SMS notification for important status updates
-        if (["confirmed", "dispatched", "shipped", "delivered"].includes(status)) {
+        if (
+          ["confirmed", "dispatched", "shipped", "delivered"].includes(status)
+        ) {
           const customer =
             updated.customerId !== null
               ? await storage.getUser(updated.customerId)
@@ -7814,14 +7718,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updated);
       } catch (error) {
         logger.error("Error updating order status:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update order status",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update order status",
+        });
       }
     },
   );
@@ -7844,14 +7746,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(returnRequests);
       } catch (error) {
         logger.error("Error fetching shop return requests:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch returns",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch returns",
+        });
       }
     },
   );
@@ -7901,22 +7799,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           res.status(201).json(returnRequest);
         } else {
-          res
-            .status(400)
-            .json({
-              message: "Order must be delivered before initiating return",
-            });
+          res.status(400).json({
+            message: "Order must be delivered before initiating return",
+          });
         }
       } catch (error) {
         logger.error("Error creating return request:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create return request",
-          });
+        res.status(500).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to create return request",
+        });
       }
     },
   );
@@ -7934,10 +7828,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Return request not found" });
 
         // Ensure this return belongs to the caller's shop
-        const order = returnRequest.orderId ? await storage.getOrder(returnRequest.orderId) : null;
+        const order = returnRequest.orderId
+          ? await storage.getOrder(returnRequest.orderId)
+          : null;
         const shopContextId = req.shopContextId;
         if (typeof shopContextId !== "number") {
-          return res.status(403).json({ message: "Unable to resolve shop context" });
+          return res
+            .status(403)
+            .json({ message: "Unable to resolve shop context" });
         }
         if (!order || order.shopId !== shopContextId) {
           return res.status(403).json({ message: "Not authorized" });
@@ -7980,14 +7878,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updatedReturn);
       } catch (error) {
         logger.error("Error approving return:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to approve return",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to approve return",
+        });
       }
     },
   );
@@ -8079,7 +7973,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const list = items
         // Filter out products from user's own shop
-        .filter(product => userShopId === null || product.shopId !== userShopId)
+        .filter(
+          (product) => userShopId === null || product.shopId !== userShopId,
+        )
         .map((product) => ({
           id: product.id,
           name: product.name,
@@ -8105,12 +8001,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       logger.error("Error fetching products:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch products",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch products",
+      });
     }
   });
 
@@ -8126,12 +8020,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const product = await storage.getProduct(productId);
-      if (!product) {
+      if (!product || product.isDeleted) {
         return res.status(404).json({ message: "Product not found" });
       }
 
       // Get shop modes for the product
-      const shop = product.shopId ? await storage.getUser(product.shopId) : null;
+      const shop = product.shopId
+        ? await storage.getUser(product.shopId)
+        : null;
       const modes = resolveShopModes(shop?.shopProfile ?? null);
 
       const payload = productDetailSchema.parse({
@@ -8145,11 +8041,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdAt:
           product.createdAt instanceof Date
             ? product.createdAt.toISOString()
-            : product.createdAt ?? null,
+            : (product.createdAt ?? null),
         updatedAt:
           product.updatedAt instanceof Date
             ? product.updatedAt.toISOString()
-            : product.updatedAt ?? null,
+            : (product.updatedAt ?? null),
         catalogModeEnabled: modes.catalogModeEnabled,
         openOrderMode: modes.openOrderMode,
         allowPayLater: modes.allowPayLater,
@@ -8167,71 +8063,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get a specific product by shop ID and product ID
-  app.get(
-    "/api/shops/:shopId/products/:productId",
-    async (req, res) => {
-      try {
-        const shopId = getValidatedParam(req, "shopId");
-        const productId = getValidatedParam(req, "productId");
-        const cacheKey = `product_detail_${shopId}_${productId}`;
-        const cached = await getCache<ProductDetail>(cacheKey);
-        if (cached) {
-          logger.debug("[API] /api/shops/:shopId/products/:productId - cache hit");
-          return res.json(cached);
-        }
-        const product = await storage.getProduct(productId);
-
-        if (!product || product.shopId !== shopId) {
-          return res
-            .status(404)
-            .json({ message: "Product not found in this shop" });
-        }
-        const shop = await storage.getUser(shopId);
-        const modes = resolveShopModes(shop?.shopProfile ?? null);
-
-        const payload = productDetailSchema.parse({
-          ...product,
-          images: product.images ?? null,
-          specifications: product.specifications ?? null,
-          tags: product.tags ?? null,
-          weight: product.weight ?? null,
-          dimensions: product.dimensions ?? null,
-          mrp: product.mrp ?? null,
-          createdAt:
-            product.createdAt instanceof Date
-              ? product.createdAt.toISOString()
-              : product.createdAt ?? null,
-          updatedAt:
-            product.updatedAt instanceof Date
-              ? product.updatedAt.toISOString()
-              : product.updatedAt ?? null,
-          catalogModeEnabled: modes.catalogModeEnabled,
-          openOrderMode: modes.openOrderMode,
-          allowPayLater: modes.allowPayLater,
-        });
-
-        await setCache(cacheKey, payload, PRODUCT_DETAIL_CACHE_TTL_SECONDS);
-        res.json(payload);
-      } catch (error) {
-        logger.error("Error fetching product:", error);
-        res
-          .status(500)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch product",
-          });
+  app.get("/api/shops/:shopId/products/:productId", async (req, res) => {
+    try {
+      const shopId = getValidatedParam(req, "shopId");
+      const productId = getValidatedParam(req, "productId");
+      const cacheKey = `product_detail_${shopId}_${productId}`;
+      const cached = await getCache<ProductDetail>(cacheKey);
+      if (cached) {
+        logger.debug(
+          "[API] /api/shops/:shopId/products/:productId - cache hit",
+        );
+        return res.json(cached);
       }
-    },
-  );
+      const product = await storage.getProduct(productId);
+
+      if (!product || product.isDeleted || product.shopId !== shopId) {
+        return res
+          .status(404)
+          .json({ message: "Product not found in this shop" });
+      }
+      const shop = await storage.getUser(shopId);
+      const modes = resolveShopModes(shop?.shopProfile ?? null);
+
+      const payload = productDetailSchema.parse({
+        ...product,
+        images: product.images ?? null,
+        specifications: product.specifications ?? null,
+        tags: product.tags ?? null,
+        weight: product.weight ?? null,
+        dimensions: product.dimensions ?? null,
+        mrp: product.mrp ?? null,
+        createdAt:
+          product.createdAt instanceof Date
+            ? product.createdAt.toISOString()
+            : (product.createdAt ?? null),
+        updatedAt:
+          product.updatedAt instanceof Date
+            ? product.updatedAt.toISOString()
+            : (product.updatedAt ?? null),
+        catalogModeEnabled: modes.catalogModeEnabled,
+        openOrderMode: modes.openOrderMode,
+        allowPayLater: modes.allowPayLater,
+      });
+
+      await setCache(cacheKey, payload, PRODUCT_DETAIL_CACHE_TTL_SECONDS);
+      res.json(payload);
+    } catch (error) {
+      logger.error("Error fetching product:", error);
+      res.status(500).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch product",
+      });
+    }
+  });
 
   // Get shop details by ID
   app.get("/api/shops/:shopId", async (req, res) => {
     try {
       const shopId = getValidatedParam(req, "shopId");
       const cacheKey = `shop_detail_${shopId}`;
-      const cached = await getCache<ReturnType<typeof buildPublicShopResponse>>(cacheKey);
+      const cached =
+        await getCache<ReturnType<typeof buildPublicShopResponse>>(cacheKey);
       if (cached) {
         return res.json(cached);
       }
@@ -8244,33 +8136,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(payload);
     } catch (error) {
       logger.error("Error fetching shop details:", error);
-      res
-        .status(500)
-        .json({
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch shop details",
-        });
+      res.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch shop details",
+      });
     }
   });
 
   app.delete(
     "/api/products/:id",
     requireAuth,
-    requireRole(["shop"]),
+    requireShopOrWorkerPermission(["products:write"]),
     async (req, res) => {
       try {
         const productId = getValidatedParam(req, "id");
         logger.info(`Delete product request received for ID: ${productId}`);
         const product = await storage.getProduct(productId);
 
-        if (!product) {
+        if (!product || product.isDeleted) {
           logger.info(`Product with ID ${productId} not found`);
           return res.status(404).json({ message: "Product not found" });
         }
 
-        if (product.shopId !== req.user!.id) {
+        const shopContextId = req.shopContextId;
+        if (
+          typeof shopContextId !== "number" ||
+          product.shopId !== shopContextId
+        ) {
           logger.info(
             `Unauthorized delete attempt for product ${productId} by user ${req.user!.id}`,
           );
@@ -8290,8 +8184,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           logger.info(`Deleting product with ID: ${productId}`);
           await storage.deleteProduct(productId);
           await Promise.all([
-            invalidateCache(`product_detail_${product.shopId}_${productId}`),
-            invalidateCache(`products:shop:${product.shopId}`),
+            invalidateCache(`product_detail_${shopContextId}_${productId}`),
+            invalidateCache(`product_direct_${productId}`),
+            invalidateCache(`products:shop:${shopContextId}`),
           ]);
           logger.info(`Product ${productId} deleted successfully`);
           res.status(200).json({ message: "Product deleted successfully" });
@@ -8306,14 +8201,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } catch (error) {
         logger.error("Error deleting product:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to delete product",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to delete product",
+        });
       }
     },
   );
@@ -8326,12 +8217,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(reviews);
     } catch (error) {
       logger.error("Error fetching product reviews:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch reviews",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch reviews",
+      });
     }
   });
 
@@ -8342,12 +8231,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(reviews);
     } catch (error) {
       logger.error("Error fetching shop product reviews:", error);
-      res
-        .status(400)
-        .json({
-          message:
-            error instanceof Error ? error.message : "Failed to fetch reviews",
-        });
+      res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Failed to fetch reviews",
+      });
     }
   });
 
@@ -8361,14 +8248,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(reviews);
       } catch (error) {
         logger.error("Error fetching customer product reviews:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch reviews",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to fetch reviews",
+        });
       }
     },
   );
@@ -8394,7 +8277,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!order || order.customerId !== req.user!.id) {
           return res.status(403).json({ message: "Cannot review this order" });
         }
-        const orderItems = await storage.getOrderItemsByOrder(result.data.orderId);
+        const orderItems = await storage.getOrderItemsByOrder(
+          result.data.orderId,
+        );
         const purchasedProductIds = new Set(
           orderItems
             .map((item) => item.productId)
@@ -8424,12 +8309,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(review);
       } catch (error) {
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error ? error.message : "Failed to save review",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to save review",
+        });
       }
     },
   );
@@ -8464,7 +8347,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "You can only edit your own reviews" });
         }
 
-        const updated = await storage.updateProductReview(reviewId, updatePayload);
+        const updated = await storage.updateProductReview(
+          reviewId,
+          updatePayload,
+        );
 
         // Invalidate product and shop review caches
         if (existing.productId) {
@@ -8478,14 +8364,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(updated);
       } catch (error) {
         logger.error("Error updating product review:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to update review",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error ? error.message : "Failed to update review",
+        });
       }
     },
   );
@@ -8512,11 +8394,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? await storage.getProduct(existingReview.productId)
           : null;
         if (!product || product.shopId !== req.user!.id) {
-          return res
-            .status(403)
-            .json({
-              message: "You can only reply to reviews for your own products",
-            });
+          return res.status(403).json({
+            message: "You can only reply to reviews for your own products",
+          });
         }
         const review = await storage.updateProductReview(reviewId, {
           shopReply: reply,
@@ -8524,71 +8404,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json(review);
       } catch (error) {
         logger.error("Error replying to review:", error);
-        res
-          .status(400)
-          .json({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to reply to review",
-          });
+        res.status(400).json({
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to reply to review",
+        });
       }
     },
   );
 
-  app.post(
-    "/api/performance-metrics",
-    async (req, res) => {
-      const parsedBody = performanceMetricEnvelopeSchema.safeParse(req.body);
-      if (!parsedBody.success) {
-        return res.status(400).json(formatValidationError(parsedBody.error));
+  app.post("/api/performance-metrics", async (req, res) => {
+    const parsedBody = performanceMetricEnvelopeSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json(formatValidationError(parsedBody.error));
+    }
+
+    const metrics = Array.isArray(parsedBody.data)
+      ? parsedBody.data
+      : [parsedBody.data];
+
+    if (metrics.length > 20) {
+      return res
+        .status(400)
+        .json({ message: "Too many metrics submitted at once" });
+    }
+
+    const role = req.user?.role;
+    const segment =
+      role === "customer"
+        ? "customer"
+        : role === "provider"
+          ? "provider"
+          : role === "shop"
+            ? "shop"
+            : role === "worker"
+              ? "provider"
+              : "other";
+
+    const isValidMetric = (metric: (typeof metrics)[number]) => {
+      if (!Number.isFinite(metric.value) || metric.value < 0) {
+        return false;
       }
-
-      const metrics = Array.isArray(parsedBody.data)
-        ? parsedBody.data
-        : [parsedBody.data];
-
-      if (metrics.length > 20) {
-        return res
-          .status(400)
-          .json({ message: "Too many metrics submitted at once" });
+      if (
+        (metric.name === "FCP" || metric.name === "LCP") &&
+        metric.value > 30_000
+      ) {
+        return false;
       }
-
-      const role = req.user?.role;
-      const segment =
-        role === "customer"
-          ? "customer"
-          : role === "provider"
-            ? "provider"
-            : role === "shop"
-              ? "shop"
-              : role === "worker"
-                ? "provider"
-                : "other";
-
-      const isValidMetric = (metric: (typeof metrics)[number]) => {
-        if (!Number.isFinite(metric.value) || metric.value < 0) {
-          return false;
-        }
-        if ((metric.name === "FCP" || metric.name === "LCP") && metric.value > 30_000) {
-          return false;
-        }
-        if (metric.name === "CLS" && metric.value > 10) {
-          return false;
-        }
-        return true;
-      };
-
-      for (const metric of metrics) {
-        if (!isValidMetric(metric)) {
-          continue;
-        }
-        recordFrontendMetric(metric, segment);
+      if (metric.name === "CLS" && metric.value > 10) {
+        return false;
       }
+      return true;
+    };
 
-      res.status(204).send();
-    },
-  );
+    for (const metric of metrics) {
+      if (!isValidMetric(metric)) {
+        continue;
+      }
+      recordFrontendMetric(metric, segment);
+    }
+
+    res.status(204).send();
+  });
 
   // Register promotion routes
   registerPromotionRoutes(app);

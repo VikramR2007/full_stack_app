@@ -12,10 +12,7 @@ import {
   type WorkerResponsibility,
 } from "@shared/schema";
 import { hasRoleAccess } from "../security/roleAccess";
-import {
-  normalizeEmail,
-  normalizePhone,
-} from "../utils/identity";
+import { normalizeEmail, normalizePhone } from "../utils/identity";
 import { formatValidationError } from "../utils/zod";
 
 function requireAuth(req: any, res: any, next: any) {
@@ -37,7 +34,9 @@ function requireRole(roles: string[]) {
   };
 }
 
-export async function getWorkerShopId(workerUserId: number): Promise<number | null> {
+export async function getWorkerShopId(
+  workerUserId: number,
+): Promise<number | null> {
   const link = await db.primary
     .select({ shopId: shopWorkers.shopId })
     .from(shopWorkers)
@@ -45,7 +44,10 @@ export async function getWorkerShopId(workerUserId: number): Promise<number | nu
   return link[0]?.shopId ?? null;
 }
 
-export async function workerHasPermission(workerUserId: number, permission: WorkerResponsibility): Promise<boolean> {
+export async function workerHasPermission(
+  workerUserId: number,
+  permission: WorkerResponsibility,
+): Promise<boolean> {
   const result = await db.primary
     .select({ responsibilities: shopWorkers.responsibilities })
     .from(shopWorkers)
@@ -86,11 +88,16 @@ export function registerWorkerRoutes(app: Express) {
     requireRole(["worker"]),
     async (req: any, res: Response) => {
       const result = await db.primary
-        .select({ shopId: shopWorkers.shopId, responsibilities: shopWorkers.responsibilities, active: shopWorkers.active })
+        .select({
+          shopId: shopWorkers.shopId,
+          responsibilities: shopWorkers.responsibilities,
+          active: shopWorkers.active,
+        })
         .from(shopWorkers)
         .where(eq(shopWorkers.workerUserId, req.user.id));
       const record = result[0];
-      if (!record) return res.status(404).json({ message: "Worker link not found" });
+      if (!record)
+        return res.status(404).json({ message: "Worker link not found" });
       res.json(record);
     },
   );
@@ -102,7 +109,11 @@ export function registerWorkerRoutes(app: Express) {
     async (_req: Request, res: Response) => {
       const presets: Record<string, WorkerResponsibility[]> = {
         cashier: ["orders:read", "orders:update", "customers:message"],
-        inventory_manager: ["products:write", "inventory:adjust", "analytics:view"],
+        inventory_manager: [
+          "products:write",
+          "inventory:adjust",
+          "analytics:view",
+        ],
         promotions_manager: ["promotions:manage", "products:read"],
         service_manager: ["bookings:manage", "customers:message"],
       };
@@ -113,7 +124,9 @@ export function registerWorkerRoutes(app: Express) {
   // Create a worker under the authenticated shop
   const createWorkerSchema = z
     .object({
-      workerNumber: z.string().regex(/^\d{10}$/, "Worker number must be exactly 10 digits"),
+      workerNumber: z
+        .string()
+        .regex(/^\d{10}$/, "Worker number must be exactly 10 digits"),
       name: z.string().min(1),
       email: z.string().email().optional().nullable(),
       phone: z.string().optional().nullable(),
@@ -133,7 +146,8 @@ export function registerWorkerRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json(formatValidationError(parsed.error));
       }
-      const { workerNumber, name, email, phone, pin, responsibilities } = parsed.data;
+      const { workerNumber, name, email, phone, pin, responsibilities } =
+        parsed.data;
       try {
         const normalizedEmail = normalizeEmail(email);
         const normalizedPhone = normalizePhone(phone);
@@ -144,7 +158,9 @@ export function registerWorkerRoutes(app: Express) {
           .from(users)
           .where(eq(users.workerNumber, workerNumber));
         if (existing[0]) {
-          return res.status(400).json({ message: "Worker number already exists" });
+          return res
+            .status(400)
+            .json({ message: "Worker number already exists" });
         }
 
         if (normalizedEmail) {
@@ -163,7 +179,9 @@ export function registerWorkerRoutes(app: Express) {
             .from(users)
             .where(eq(users.phone, normalizedPhone));
           if (phoneConflict[0]) {
-            return res.status(400).json({ message: "Phone number already in use" });
+            return res
+              .status(400)
+              .json({ message: "Phone number already in use" });
           }
         }
 
@@ -171,7 +189,8 @@ export function registerWorkerRoutes(app: Express) {
         const hashedPin = await hashPasswordInternal(pin);
         // Generate a unique username from workerNumber for backwards compatibility
         const generatedUsername = `worker_${workerNumber}`;
-        const fallbackEmail = normalizedEmail ?? `worker_${workerNumber}@workers.local`;
+        const fallbackEmail =
+          normalizedEmail ?? `worker_${workerNumber}@workers.local`;
 
         const [createdUser] = await db.primary
           .insert(users)
@@ -261,25 +280,49 @@ export function registerWorkerRoutes(app: Express) {
         return res.json({ workerNumber, available });
       } catch (error) {
         logger.error("Error checking worker number availability:", error);
-        return res.status(500).json({ message: "Failed to check availability" });
+        return res
+          .status(500)
+          .json({ message: "Failed to check availability" });
       }
     },
   );
 
   const workerNumberAvailabilitySchema = z
     .object({
-      workerNumber: z.string().regex(/^\d{10}$/, "Worker number must be exactly 10 digits"),
+      workerNumber: z
+        .string()
+        .regex(/^\d{10}$/, "Worker number must be exactly 10 digits"),
     })
     .strict();
 
   // Update worker details/responsibilities or reset PIN
   const updateWorkerSchema = z
     .object({
-      name: z.string().optional(),
-      email: z.string().email().optional(),
-      phone: z.string().optional(),
+      name: z.string().trim().min(1).max(100).optional(),
+      email: z.preprocess(
+        (value) =>
+          typeof value === "string" && value.trim().length === 0 ? null : value,
+        z.string().trim().email().nullable().optional(),
+      ),
+      phone: z.preprocess(
+        (value) =>
+          value == null ||
+          (typeof value === "string" && value.trim().length === 0)
+            ? undefined
+            : value,
+        z
+          .string()
+          .trim()
+          .min(8)
+          .max(20)
+          .regex(/^[+\d\s().-]+$/)
+          .optional(),
+      ),
       responsibilities: z.array(WorkerResponsibilityZ).optional(),
-      pin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits").optional(),
+      pin: z
+        .string()
+        .regex(/^\d{4}$/, "PIN must be exactly 4 digits")
+        .optional(),
       active: z.boolean().optional(),
     })
     .strict();
@@ -305,28 +348,84 @@ export function registerWorkerRoutes(app: Express) {
         const link = await db.primary
           .select()
           .from(shopWorkers)
-          .where(and(eq(shopWorkers.workerUserId, workerUserId), eq(shopWorkers.shopId, req.user!.id)));
-        if (!link[0]) return res.status(404).json({ message: "Worker not found for this shop" });
-
-        // Update responsibilities/active on link
-        if (responsibilities || typeof active === "boolean") {
-          await db.primary
-            .update(shopWorkers)
-            .set({
-              ...(responsibilities ? { responsibilities: responsibilities as any } : {}),
-              ...(typeof active === "boolean" ? { active } : {}),
-            })
-            .where(and(eq(shopWorkers.workerUserId, workerUserId), eq(shopWorkers.shopId, req.user!.id)));
-        }
+          .where(
+            and(
+              eq(shopWorkers.workerUserId, workerUserId),
+              eq(shopWorkers.shopId, req.user!.id),
+            ),
+          );
+        if (!link[0])
+          return res
+            .status(404)
+            .json({ message: "Worker not found for this shop" });
 
         // Update basic user fields
-        const updateUserData: any = {};
-        if (name) updateUserData.name = name;
-        if (email) updateUserData.email = email;
-        if (phone) updateUserData.phone = phone;
+        const normalizedEmail =
+          email !== undefined ? normalizeEmail(email) : undefined;
+        const normalizedPhone =
+          phone !== undefined ? normalizePhone(phone) : undefined;
+
+        if (email !== undefined && normalizedEmail) {
+          const emailConflict = await db.primary
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, normalizedEmail));
+          if (emailConflict.some((user) => user.id !== workerUserId)) {
+            return res.status(400).json({ message: "Email already in use" });
+          }
+        }
+
+        if (phone !== undefined) {
+          if (
+            !normalizedPhone ||
+            normalizedPhone.length < 8 ||
+            normalizedPhone.length > 20
+          ) {
+            return res.status(400).json({ message: "Invalid phone number" });
+          }
+          const phoneConflict = await db.primary
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.phone, normalizedPhone));
+          if (phoneConflict.some((user) => user.id !== workerUserId)) {
+            return res
+              .status(400)
+              .json({ message: "Phone number already in use" });
+          }
+        }
+
+        const updateUserData: Record<string, unknown> = {};
+        if (name !== undefined) updateUserData.name = name;
+        if (email !== undefined) updateUserData.email = normalizedEmail;
+        if (phone !== undefined) updateUserData.phone = normalizedPhone;
         if (pin) updateUserData.pin = await hashPasswordInternal(pin);
-        if (Object.keys(updateUserData).length) {
-          await db.primary.update(users).set(updateUserData).where(eq(users.id, workerUserId));
+        // Apply the user and worker-link changes atomically after validation so
+        // a database error cannot leave permissions and profile data split.
+        if (Object.keys(updateUserData).length || responsibilities || typeof active === "boolean") {
+          await db.primary.transaction(async (tx) => {
+            if (Object.keys(updateUserData).length) {
+              await tx
+                .update(users)
+                .set(updateUserData)
+                .where(eq(users.id, workerUserId));
+            }
+            if (responsibilities || typeof active === "boolean") {
+              await tx
+                .update(shopWorkers)
+                .set({
+                  ...(responsibilities
+                    ? { responsibilities: responsibilities as any }
+                    : {}),
+                  ...(typeof active === "boolean" ? { active } : {}),
+                })
+                .where(
+                  and(
+                    eq(shopWorkers.workerUserId, workerUserId),
+                    eq(shopWorkers.shopId, req.user!.id),
+                  ),
+                );
+            }
+          });
         }
 
         return res.json({ message: "Worker updated" });
@@ -361,8 +460,14 @@ export function registerWorkerRoutes(app: Express) {
           })
           .from(shopWorkers)
           .leftJoin(users, eq(users.id, shopWorkers.workerUserId))
-          .where(and(eq(shopWorkers.shopId, req.user!.id), eq(shopWorkers.workerUserId, workerUserId)));
-        if (!result[0]) return res.status(404).json({ message: "Worker not found" });
+          .where(
+            and(
+              eq(shopWorkers.shopId, req.user!.id),
+              eq(shopWorkers.workerUserId, workerUserId),
+            ),
+          );
+        if (!result[0])
+          return res.status(404).json({ message: "Worker not found" });
         return res.json(result[0]);
       } catch (error) {
         logger.error("Error fetching worker:", error);
@@ -371,7 +476,7 @@ export function registerWorkerRoutes(app: Express) {
     },
   );
 
-  // Delete a worker (removes link and deletes the worker user)
+  // Revoke worker access without deleting the user row referenced by history.
   app.delete(
     "/api/shops/workers/:workerUserId",
     requireAuth,
@@ -386,18 +491,27 @@ export function registerWorkerRoutes(app: Express) {
         const link = await db.primary
           .select()
           .from(shopWorkers)
-          .where(and(eq(shopWorkers.workerUserId, workerUserId), eq(shopWorkers.shopId, req.user!.id)));
-        if (!link[0]) return res.status(404).json({ message: "Worker not found for this shop" });
+          .where(
+            and(
+              eq(shopWorkers.workerUserId, workerUserId),
+              eq(shopWorkers.shopId, req.user!.id),
+            ),
+          );
+        if (!link[0])
+          return res
+            .status(404)
+            .json({ message: "Worker not found for this shop" });
 
-        // Remove link
-        await db.primary.delete(shopWorkers).where(and(eq(shopWorkers.workerUserId, workerUserId), eq(shopWorkers.shopId, req.user!.id)));
-
-        // Delete user account if role is worker
-        const target = await db.primary.select().from(users).where(eq(users.id, workerUserId));
-        if (target[0]?.role === 'worker') {
-          await db.primary.delete(users).where(eq(users.id, workerUserId));
-        }
-        return res.json({ message: "Worker removed" });
+        await db.primary
+          .update(shopWorkers)
+          .set({ active: false })
+          .where(
+            and(
+              eq(shopWorkers.workerUserId, workerUserId),
+              eq(shopWorkers.shopId, req.user!.id),
+            ),
+          );
+        return res.json({ message: "Worker access revoked" });
       } catch (error) {
         logger.error("Error deleting worker:", error);
         return res.status(500).json({ message: "Failed to delete worker" });

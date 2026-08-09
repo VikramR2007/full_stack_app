@@ -59,8 +59,7 @@ const en = {
   inventory_finished: "Finished",
   inventory_quick_add_hint: "Quick adds start as Have It.",
   inventory_status_title: "Stock status",
-  inventory_status_description:
-    "Use Have It / Finished. Numbers are optional.",
+  inventory_status_description: "Use Have It / Finished. Numbers are optional.",
   inventory_exact_count_label: "Exact count (optional)",
   inventory_exact_count_placeholder: "Leave blank to skip numbers",
   inventory_clear: "Clear",
@@ -148,7 +147,8 @@ const en = {
   provider_services_list_subtitle: "Edit pricing and availability quickly.",
   provider_services_search_placeholder: "Search services...",
   provider_services_filter_category: "Filter category",
-  provider_services_empty: "No services yet. Add your first service to get bookings.",
+  provider_services_empty:
+    "No services yet. Add your first service to get bookings.",
   provider_services_empty_filtered: "No services match these filters.",
   delete_service_confirm_title: "Delete this service?",
   delete_service_confirm_description:
@@ -209,6 +209,7 @@ const en = {
     "Set your exact position so that distance-based search works accurately.",
   location_saved_title: "Location saved",
   location_saved_description: "Location saved.",
+  clear_location: "Clear location",
   location_update_failed: "Location update failed",
   geolocation_unavailable_title: "GPS not available",
   geolocation_unavailable_description: "Your browser can't use GPS.",
@@ -354,7 +355,8 @@ const en = {
   phone: "Phone",
   accept_booking: "Accept booking",
   additional_instructions: "Additional instructions",
-  add_any_instructions_for_the_customer: "Add any instructions for the customer",
+  add_any_instructions_for_the_customer:
+    "Add any instructions for the customer",
   reject_booking: "Reject booking",
   reason_for_rejection: "Reason for rejection",
   please_provide_a_reason_for_rejecting_this_booking:
@@ -511,7 +513,8 @@ const en = {
   upi_id_copy_failed_description: "Please copy it manually.",
   upi_id_copy_prompt: "Copy the UPI ID below",
   booking_cancelled_title: "Booking cancelled",
-  booking_cancelled_description: "Your booking has been cancelled successfully.",
+  booking_cancelled_description:
+    "Your booking has been cancelled successfully.",
   reschedule_requested_title: "Reschedule requested",
   reschedule_requested_description:
     "Your reschedule request has been sent to the provider for confirmation.",
@@ -570,7 +573,7 @@ const en = {
   dashboard_search_title: "Search",
   dashboard_search_subtitle: "Find services, products, shops.",
   badge_new: "New",
-  dashboard_search_placeholder: "Try \"cleaning\"",
+  dashboard_search_placeholder: 'Try "cleaning"',
   dashboard_location_hint: "Using saved location.",
   dashboard_search_prompt: "Type to see nearby options.",
   dashboard_search_loading: "Searching...",
@@ -602,7 +605,8 @@ const en = {
   dashboard_booking_history_title: "Booking History",
   customer_booking_requests_empty: "You have no booking requests",
   customer_booking_requests_cta: "Book a Service",
-  customer_booking_requests_pending_empty: "You have no pending booking requests",
+  customer_booking_requests_pending_empty:
+    "You have no pending booking requests",
   customer_booking_requests_waiting: "Awaiting response",
   customer_booking_requests_view_all: "View All Bookings",
   customer_booking_history_empty: "You have no booking history yet",

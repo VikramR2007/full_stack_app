@@ -89,7 +89,6 @@ import {
   inArray,
   gte,
   isNotNull,
-
   type SQL,
 } from "drizzle-orm";
 import {
@@ -103,14 +102,8 @@ import {
   normalizePhone,
   normalizeUsername,
 } from "./utils/identity";
-import {
-  normalizeCoordinate,
-  DEFAULT_NEARBY_RADIUS_KM,
-} from "./utils/geo";
-import {
-  buildGeoDistanceCondition,
-  shouldUsePostgis,
-} from "./utils/geo-sql";
+import { normalizeCoordinate, DEFAULT_NEARBY_RADIUS_KM } from "./utils/geo";
+import { buildGeoDistanceCondition, shouldUsePostgis } from "./utils/geo-sql";
 import { enqueuePushNotificationDispatch } from "./jobs/pushNotificationDispatchJob";
 // Import date utilities for storage/display handling
 
@@ -219,7 +212,9 @@ function normalizeProductFilters(filters: Record<string, unknown>) {
     }
   }
   if (filters.attributes && typeof filters.attributes === "object") {
-    const entries = Object.entries(filters.attributes as Record<string, unknown>)
+    const entries = Object.entries(
+      filters.attributes as Record<string, unknown>,
+    )
       .filter(([, value]) => value !== undefined && value !== null)
       .sort(([a], [b]) => a.localeCompare(b));
     normalized.attributes = Object.fromEntries(entries);
@@ -253,10 +248,7 @@ function normalizeProductFilters(filters: Record<string, unknown>) {
   if (filters.pageSize !== undefined) {
     const pageSize = Number(filters.pageSize);
     if (Number.isFinite(pageSize)) {
-      normalized.pageSize = Math.max(
-        1,
-        Math.min(100, Math.trunc(pageSize)),
-      );
+      normalized.pageSize = Math.max(1, Math.min(100, Math.trunc(pageSize)));
     }
   }
 
@@ -291,15 +283,14 @@ export class PostgresStorage implements IStorage {
 
   constructor() {
     const isTestEnv = (process.env.NODE_ENV ?? "").toLowerCase() === "test";
-    const useInMemoryDb = (process.env.USE_IN_MEMORY_DB ?? "").toLowerCase() === "true";
+    const useInMemoryDb =
+      (process.env.USE_IN_MEMORY_DB ?? "").toLowerCase() === "true";
     const forceInMemorySessions =
       (process.env.USE_IN_MEMORY_SESSION_STORE ?? "").toLowerCase() === "true";
 
     if (isTestEnv || useInMemoryDb || forceInMemorySessions) {
       this.sessionStore = new session.MemoryStore();
-      logger.info(
-        "Using in-memory session store for test/in-memory mode",
-      );
+      logger.info("Using in-memory session store for test/in-memory mode");
       return;
     }
 
@@ -319,8 +310,7 @@ export class PostgresStorage implements IStorage {
       process.env.SESSION_TTL_SECONDS ?? "",
       10,
     );
-    const tableName =
-      process.env.SESSION_TABLE_NAME?.trim() ?? "sessions";
+    const tableName = process.env.SESSION_TABLE_NAME?.trim() ?? "sessions";
     const schemaName = process.env.SESSION_SCHEMA_NAME?.trim();
     const createTableIfMissing =
       process.env.SESSION_AUTO_CREATE_TABLE !== "false";
@@ -334,10 +324,7 @@ export class PostgresStorage implements IStorage {
           ? pruneIntervalCandidate
           : 60,
       errorLog: (...args: unknown[]) => {
-        logger.error(
-          { args },
-          "connect-pg-simple emitted an error",
-        );
+        logger.error({ args }, "connect-pg-simple emitted an error");
       },
     };
 
@@ -368,7 +355,10 @@ export class PostgresStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const normalized = normalizeEmail(email);
     if (!normalized) return undefined;
-    const result = await db.primary.select().from(users).where(eq(users.email, normalized));
+    const result = await db.primary
+      .select()
+      .from(users)
+      .where(eq(users.email, normalized));
     return result[0];
   }
 
@@ -376,8 +366,7 @@ export class PostgresStorage implements IStorage {
 
   async deleteUserAndData(userId: number): Promise<void> {
     await db.primary.transaction(async (tx) => {
-      const providerServiceIdsSubquery =
-        sql`SELECT ${services.id} FROM ${services} WHERE ${services.providerId} = ${userId}`;
+      const providerServiceIdsSubquery = sql`SELECT ${services.id} FROM ${services} WHERE ${services.providerId} = ${userId}`;
       const relatedBookingIdsSubquery = sql`
         SELECT ${bookings.id}
         FROM ${bookings}
@@ -390,32 +379,37 @@ export class PostgresStorage implements IStorage {
         WHERE ${orders.customerId} = ${userId}
            OR ${orders.shopId} = ${userId}
       `;
-      const ownedProductIdsSubquery =
-        sql`SELECT ${products.id} FROM ${products} WHERE ${products.shopId} = ${userId}`;
+      const ownedProductIdsSubquery = sql`SELECT ${products.id} FROM ${products} WHERE ${products.shopId} = ${userId}`;
 
       // Booking-related entities.
-      await tx.delete(bookingHistory).where(
-        sql`${bookingHistory.bookingId} IN (${relatedBookingIdsSubquery})`,
-      );
-      await tx.delete(notifications).where(
-        sql`${notifications.relatedBookingId} IN (${relatedBookingIdsSubquery})`,
-      );
+      await tx
+        .delete(bookingHistory)
+        .where(
+          sql`${bookingHistory.bookingId} IN (${relatedBookingIdsSubquery})`,
+        );
+      await tx
+        .delete(notifications)
+        .where(
+          sql`${notifications.relatedBookingId} IN (${relatedBookingIdsSubquery})`,
+        );
       await tx.delete(reviews).where(sql`
         ${reviews.customerId} = ${userId}
         OR ${reviews.serviceId} IN (${providerServiceIdsSubquery})
         OR ${reviews.bookingId} IN (${relatedBookingIdsSubquery})
       `);
-      await tx.delete(bookings).where(
-        sql`${bookings.id} IN (${relatedBookingIdsSubquery})`,
-      );
+      await tx
+        .delete(bookings)
+        .where(sql`${bookings.id} IN (${relatedBookingIdsSubquery})`);
 
       // Order/product dependencies.
-      await tx.delete(returns).where(
-        sql`${returns.orderId} IN (${relatedOrderIdsSubquery})`,
-      );
-      await tx.delete(orderStatusUpdates).where(
-        sql`${orderStatusUpdates.orderId} IN (${relatedOrderIdsSubquery})`,
-      );
+      await tx
+        .delete(returns)
+        .where(sql`${returns.orderId} IN (${relatedOrderIdsSubquery})`);
+      await tx
+        .delete(orderStatusUpdates)
+        .where(
+          sql`${orderStatusUpdates.orderId} IN (${relatedOrderIdsSubquery})`,
+        );
       await tx.delete(productReviews).where(sql`
         ${productReviews.customerId} = ${userId}
         OR ${productReviews.orderId} IN (${relatedOrderIdsSubquery})
@@ -425,9 +419,9 @@ export class PostgresStorage implements IStorage {
         ${orderItems.orderId} IN (${relatedOrderIdsSubquery})
         OR ${orderItems.productId} IN (${ownedProductIdsSubquery})
       `);
-      await tx.delete(orders).where(
-        sql`${orders.id} IN (${relatedOrderIdsSubquery})`,
-      );
+      await tx
+        .delete(orders)
+        .where(sql`${orders.id} IN (${relatedOrderIdsSubquery})`);
 
       // Shop-owned resources.
       await tx.delete(promotions).where(eq(promotions.shopId, userId));
@@ -541,17 +535,24 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async getProducts(filters?: any): Promise<{ items: ProductListItem[]; hasMore: boolean }> {
+  async getProducts(
+    filters?: any,
+  ): Promise<{ items: ProductListItem[]; hasMore: boolean }> {
     const effectiveFilters = filters ?? {};
     const cacheKey = buildProductCacheKey(effectiveFilters);
-    const cached = await getCache<{ items: ProductListItem[]; hasMore: boolean }>(
-      cacheKey,
-    );
+    const cached = await getCache<{
+      items: ProductListItem[];
+      hasMore: boolean;
+    }>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const { page: rawPage, pageSize: rawPageSize, ...criteria } = effectiveFilters;
+    const {
+      page: rawPage,
+      pageSize: rawPageSize,
+      ...criteria
+    } = effectiveFilters;
     const page = Math.max(1, Number(rawPage ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(rawPageSize ?? 36)));
     const offset = (page - 1) * pageSize;
@@ -600,9 +601,7 @@ export class PostgresStorage implements IStorage {
       }
       if (criteria.attributes) {
         for (const key in criteria.attributes) {
-          if (
-            Object.prototype.hasOwnProperty.call(criteria.attributes, key)
-          ) {
+          if (Object.prototype.hasOwnProperty.call(criteria.attributes, key)) {
             conditions.push(
               sql`${products.specifications}->>${key} = ${criteria.attributes[key]}`,
             );
@@ -718,7 +717,10 @@ export class PostgresStorage implements IStorage {
   // ─── USER OPERATIONS ─────────────────────────────────────────────
   async getUser(id: number): Promise<User | undefined> {
     // PERFORMANCE FIX: Use replica for read operations
-    const result = await db.replica.select().from(users).where(eq(users.id, id));
+    const result = await db.replica
+      .select()
+      .from(users)
+      .where(eq(users.id, id));
     return result[0];
   }
 
@@ -742,15 +744,14 @@ export class PostgresStorage implements IStorage {
     return result[0];
   }
 
-  async getAllUsers(options?: { limit?: number; offset?: number }): Promise<User[]> {
+  async getAllUsers(options?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<User[]> {
     // PERFORMANCE FIX: Add pagination to prevent memory issues with large user counts
     const limit = options?.limit ?? 1000;
     const offset = options?.offset ?? 0;
-    return await db.primary
-      .select()
-      .from(users)
-      .limit(limit)
-      .offset(offset);
+    return await db.primary.select().from(users).limit(limit).offset(offset);
   }
 
   async getShops(filters?: {
@@ -764,11 +765,14 @@ export class PostgresStorage implements IStorage {
 
     // Build cache key from filters
     const filterParts: string[] = [];
-    if (filters?.locationCity) filterParts.push(`city:${filters.locationCity.toLowerCase()}`);
-    if (filters?.locationState) filterParts.push(`state:${filters.locationState.toLowerCase()}`);
-    if (filters?.excludeOwnerId) filterParts.push(`excl:${filters.excludeOwnerId}`);
+    if (filters?.locationCity)
+      filterParts.push(`city:${filters.locationCity.toLowerCase()}`);
+    if (filters?.locationState)
+      filterParts.push(`state:${filters.locationState.toLowerCase()}`);
+    if (filters?.excludeOwnerId)
+      filterParts.push(`excl:${filters.excludeOwnerId}`);
     filterParts.push(`limit:${maxResults}`);
-    const cacheKey = `shops:list:${filterParts.join(':')}`;
+    const cacheKey = `shops:list:${filterParts.join(":")}`;
 
     const cached = await getCache<User[]>(cacheKey);
     if (cached) return cached;
@@ -779,10 +783,14 @@ export class PostgresStorage implements IStorage {
       conditions.push(sql`${shops.ownerId} != ${filters.excludeOwnerId}`);
     }
     if (filters?.locationCity) {
-      conditions.push(sql`LOWER(${shops.shopAddressCity}) = LOWER(${filters.locationCity})`);
+      conditions.push(
+        sql`LOWER(${shops.shopAddressCity}) = LOWER(${filters.locationCity})`,
+      );
     }
     if (filters?.locationState) {
-      conditions.push(sql`LOWER(${shops.shopAddressState}) = LOWER(${filters.locationState})`);
+      conditions.push(
+        sql`LOWER(${shops.shopAddressState}) = LOWER(${filters.locationState})`,
+      );
     }
 
     // Query shops table with SQL filters and join with users
@@ -820,9 +828,17 @@ export class PostgresStorage implements IStorage {
           shopAddressCity: shop.shopAddressCity || undefined,
           shopAddressState: shop.shopAddressState || undefined,
           shopAddressPincode: shop.shopAddressPincode || undefined,
-          shopLocationLat: shop.shopLocationLat ? Number(shop.shopLocationLat) : undefined,
-          shopLocationLng: shop.shopLocationLng ? Number(shop.shopLocationLng) : undefined,
-          workingHours: shop.workingHours || { from: "09:00", to: "18:00", days: [] },
+          shopLocationLat: shop.shopLocationLat
+            ? Number(shop.shopLocationLat)
+            : undefined,
+          shopLocationLng: shop.shopLocationLng
+            ? Number(shop.shopLocationLng)
+            : undefined,
+          workingHours: shop.workingHours || {
+            from: "09:00",
+            to: "18:00",
+            days: [],
+          },
           shippingPolicy: shop.shippingPolicy || undefined,
           returnPolicy: shop.returnPolicy || undefined,
           freeDeliveryRadiusKm:
@@ -851,12 +867,18 @@ export class PostgresStorage implements IStorage {
   }
 
   async getShopById(shopId: number): Promise<Shop | undefined> {
-    const result = await db.primary.select().from(shops).where(eq(shops.id, shopId));
+    const result = await db.primary
+      .select()
+      .from(shops)
+      .where(eq(shops.id, shopId));
     return result[0];
   }
 
   async getShopByOwnerId(ownerId: number): Promise<Shop | undefined> {
-    const result = await db.primary.select().from(shops).where(eq(shops.ownerId, ownerId));
+    const result = await db.primary
+      .select()
+      .from(shops)
+      .where(eq(shops.ownerId, ownerId));
     return result[0];
   }
 
@@ -989,12 +1011,15 @@ export class PostgresStorage implements IStorage {
           if (combinedData.name) completedFields++;
           if (combinedData.phone) completedFields++;
           // Address completeness: either full address fields OR addressLandmark is sufficient
-          const hasFullAddress = combinedData.addressStreet &&
+          const hasFullAddress =
+            combinedData.addressStreet &&
             combinedData.addressCity &&
             combinedData.addressState &&
             combinedData.addressPostalCode &&
             combinedData.addressCountry;
-          const hasLandmark = combinedData.addressLandmark && combinedData.addressLandmark.trim().length > 0;
+          const hasLandmark =
+            combinedData.addressLandmark &&
+            combinedData.addressLandmark.trim().length > 0;
           if (hasFullAddress || hasLandmark) completedFields++;
         } else if (existingUser.role === "provider") {
           totalProfileFields = 9; // name, phone, email, full address, bio, qualifications, experience, workingHours, languages
@@ -1103,7 +1128,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getService(id: number): Promise<Service | undefined> {
-    const result = await db.primary.select().from(services).where(eq(services.id, id));
+    const result = await db.primary
+      .select()
+      .from(services)
+      .where(eq(services.id, id));
     return result[0];
   }
   async getServicesByIds(ids: number[]): Promise<Service[]> {
@@ -1161,11 +1189,12 @@ export class PostgresStorage implements IStorage {
       .offset(offset);
   }
 
-
-  async getBookingsWithRelations(ids: number[]): Promise<BookingWithRelations[]> {
+  async getBookingsWithRelations(
+    ids: number[],
+  ): Promise<BookingWithRelations[]> {
     if (ids.length === 0) return [];
 
-    return await db.primary.query.bookings.findMany({
+    return (await db.primary.query.bookings.findMany({
       where: inArray(bookings.id, ids),
       with: {
         service: {
@@ -1175,13 +1204,13 @@ export class PostgresStorage implements IStorage {
         },
         customer: true,
       },
-    }) as unknown as BookingWithRelations[];
+    })) as unknown as BookingWithRelations[];
   }
 
   async getOrdersWithRelations(ids: number[]): Promise<OrderWithRelations[]> {
     if (ids.length === 0) return [];
 
-    return await db.primary.query.orders.findMany({
+    return (await db.primary.query.orders.findMany({
       where: inArray(orders.id, ids),
       with: {
         items: {
@@ -1193,7 +1222,7 @@ export class PostgresStorage implements IStorage {
         customer: true,
       },
       orderBy: desc(orders.orderDate),
-    }) as unknown as OrderWithRelations[];
+    })) as unknown as OrderWithRelations[];
   }
 
   // Implementation of IStorage.getBookingHistoryForCustomer
@@ -1307,7 +1336,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getReviewById(id: number): Promise<Review | undefined> {
-    const result = await db.primary.select().from(reviews).where(eq(reviews.id, id));
+    const result = await db.primary
+      .select()
+      .from(reviews)
+      .where(eq(reviews.id, id));
     return result[0];
   }
 
@@ -1437,8 +1469,11 @@ export class PostgresStorage implements IStorage {
     filters?: any,
   ): Promise<{ items: Service[]; hasMore: boolean }> {
     const effectiveFilters = filters ?? {};
-    const { page: rawPage, pageSize: rawPageSize, ...criteria } =
-      effectiveFilters;
+    const {
+      page: rawPage,
+      pageSize: rawPageSize,
+      ...criteria
+    } = effectiveFilters;
     const page = Math.max(1, Number(rawPage ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(rawPageSize ?? 24)));
     const offset = (page - 1) * pageSize;
@@ -1538,9 +1573,7 @@ export class PostgresStorage implements IStorage {
         }
         const lat = Number(criteria.lat);
         const lng = Number(criteria.lng);
-        const radiusKm = Number(
-          criteria.radiusKm ?? DEFAULT_NEARBY_RADIUS_KM,
-        );
+        const radiusKm = Number(criteria.radiusKm ?? DEFAULT_NEARBY_RADIUS_KM);
         const { condition, distanceExpr } = buildGeoDistanceCondition({
           columnLat: users.latitude,
           columnLng: users.longitude,
@@ -1642,7 +1675,8 @@ export class PostgresStorage implements IStorage {
     if (notification) {
       notifyNotificationChange(notification.userId ?? null);
       if (notification.userId) {
-        const relatedId = notification.relatedBookingId ?? createdBooking?.id ?? null;
+        const relatedId =
+          notification.relatedBookingId ?? createdBooking?.id ?? null;
         void this.sendPushNotificationAsync(
           notification.userId,
           notification.title,
@@ -1657,7 +1691,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getBooking(id: number): Promise<Booking | undefined> {
-    const result = await db.primary.select().from(bookings).where(eq(bookings.id, id));
+    const result = await db.primary
+      .select()
+      .from(bookings)
+      .where(eq(bookings.id, id));
     return result[0];
   }
 
@@ -1736,7 +1773,10 @@ export class PostgresStorage implements IStorage {
     const notification = options?.notification ?? null;
     const { updatedBooking, currentBooking, didUpdate } =
       await db.primary.transaction(async (tx) => {
-        const rows = await tx.select().from(bookings).where(eq(bookings.id, id));
+        const rows = await tx
+          .select()
+          .from(bookings)
+          .where(eq(bookings.id, id));
         const currentBooking = rows[0];
         if (!currentBooking) throw new Error("Booking not found");
 
@@ -1749,7 +1789,10 @@ export class PostgresStorage implements IStorage {
         }
 
         // If no actual fields to update (other than updatedAt), return current booking
-        if (Object.keys(updateData).length === 1 && (updateData as any).updatedAt) {
+        if (
+          Object.keys(updateData).length === 1 &&
+          (updateData as any).updatedAt
+        ) {
           // Optionally, you might still want to update 'updatedAt' or decide if this scenario is an error
           // For now, let's assume if only updatedAt is there, no meaningful update was intended beyond timestamp.
           // To be safe, and if Drizzle handles empty .set() gracefully or errors, this could be db.primary.update().set({updatedAt: updateData.updatedAt})
@@ -1776,7 +1819,11 @@ export class PostgresStorage implements IStorage {
           logger.info(
             `[DB DEBUG] updateBooking for ID ${id}: No effective changes provided. Returning current booking.`,
           );
-          return { updatedBooking: currentBooking, currentBooking, didUpdate: false };
+          return {
+            updatedBooking: currentBooking,
+            currentBooking,
+            didUpdate: false,
+          };
         }
 
         const result = await tx
@@ -1786,7 +1833,8 @@ export class PostgresStorage implements IStorage {
           .returning();
 
         const updatedBooking = result[0];
-        if (!updatedBooking) throw new Error("Booking not found or update failed");
+        if (!updatedBooking)
+          throw new Error("Booking not found or update failed");
 
         // If the status changed, add an entry in the booking history table with UTC timestamp
         // Ensure booking.status is checked against undefined before using it
@@ -1864,7 +1912,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getProduct(id: number): Promise<Product | undefined> {
-    const result = await db.primary.select().from(products).where(eq(products.id, id));
+    const result = await db.primary
+      .select()
+      .from(products)
+      .where(eq(products.id, id));
     return result[0];
   }
 
@@ -1906,7 +1957,7 @@ export class PostgresStorage implements IStorage {
   async updateProduct(id: number, product: Partial<Product>): Promise<Product> {
     const result = await db.primary
       .update(products)
-      .set(product)
+      .set({ ...product, updatedAt: new Date() })
       .where(eq(products.id, id))
       .returning();
     if (!result[0]) throw new Error("Product not found");
@@ -1970,7 +2021,7 @@ export class PostgresStorage implements IStorage {
 
         // Execute batch updates in parallel
         const batchResults = await Promise.all(
-          batch.map(update =>
+          batch.map((update) =>
             tx
               .update(products)
               .set({
@@ -1981,9 +2032,14 @@ export class PostgresStorage implements IStorage {
                     : undefined,
                 updatedAt: new Date(),
               })
-              .where(and(eq(products.id, update.productId), eq(products.isDeleted, false)))
-              .returning()
-          )
+              .where(
+                and(
+                  eq(products.id, update.productId),
+                  eq(products.isDeleted, false),
+                ),
+              )
+              .returning(),
+          ),
         );
 
         for (let j = 0; j < batchResults.length; j++) {
@@ -2042,7 +2098,9 @@ export class PostgresStorage implements IStorage {
         .select({ customerId: wishlist.customerId })
         .from(wishlist)
         .where(eq(wishlist.productId, productId));
-      await db.primary.delete(wishlist).where(eq(wishlist.productId, productId));
+      await db.primary
+        .delete(wishlist)
+        .where(eq(wishlist.productId, productId));
       logger.info(
         `Successfully removed product ID ${productId} from all wishlists`,
       );
@@ -2143,7 +2201,9 @@ export class PostgresStorage implements IStorage {
         const shopModes = resolveShopModes(
           (productRecord.shopProfile as ShopProfile | null | undefined) ?? null,
         );
-        const enforceStock = !(shopModes.catalogModeEnabled || shopModes.openOrderMode);
+        const enforceStock = !(
+          shopModes.catalogModeEnabled || shopModes.openOrderMode
+        );
         const availableStock = productRecord.stock ?? 0;
         if (enforceStock && quantity > availableStock) {
           throw new Error(
@@ -2164,7 +2224,10 @@ export class PostgresStorage implements IStorage {
             .update(cart)
             .set({ quantity })
             .where(
-              and(eq(cart.customerId, customerId), eq(cart.productId, productId)),
+              and(
+                eq(cart.customerId, customerId),
+                eq(cart.productId, productId),
+              ),
             );
           return;
         }
@@ -2173,7 +2236,10 @@ export class PostgresStorage implements IStorage {
       });
       notifyCartChange(customerId);
     } catch (error) {
-      logger.error({ err: error, customerId, productId }, "Failed to add to cart");
+      logger.error(
+        { err: error, customerId, productId },
+        "Failed to add to cart",
+      );
       if (
         error instanceof Error &&
         error.message.startsWith("Cannot add items")
@@ -2223,11 +2289,13 @@ export class PostgresStorage implements IStorage {
       const productsList =
         productIds.length > 0
           ? await db.primary
-            .select()
-            .from(products)
-            .where(inArray(products.id, productIds))
+              .select()
+              .from(products)
+              .where(inArray(products.id, productIds))
           : [];
-      const productMap = new Map(productsList.map((product) => [product.id, product]));
+      const productMap = new Map(
+        productsList.map((product) => [product.id, product]),
+      );
 
       const missingProductIds: number[] = [];
       const result: { product: Product; quantity: number }[] = [];
@@ -2322,11 +2390,13 @@ export class PostgresStorage implements IStorage {
     const productsList =
       productIds.length > 0
         ? await db.primary
-          .select()
-          .from(products)
-          .where(inArray(products.id, productIds))
+            .select()
+            .from(products)
+            .where(inArray(products.id, productIds))
         : [];
-    const productMap = new Map(productsList.map((product) => [product.id, product]));
+    const productMap = new Map(
+      productsList.map((product) => [product.id, product]),
+    );
 
     const staleProductIds: number[] = [];
     const result: Product[] = [];
@@ -2377,7 +2447,10 @@ export class PostgresStorage implements IStorage {
         | "paid"
         | "failed",
     };
-    const result = await db.primary.insert(orders).values(orderToInsert).returning();
+    const result = await db.primary
+      .insert(orders)
+      .values(orderToInsert)
+      .returning();
     const created = result[0];
     await db.primary.insert(orderStatusUpdates).values({
       orderId: created.id,
@@ -2444,7 +2517,9 @@ export class PostgresStorage implements IStorage {
           const updateResult = await tx
             .update(products)
             .set({ stock: sql`${products.stock} - ${quantity}` })
-            .where(and(eq(products.id, productId), gte(products.stock, quantity)))
+            .where(
+              and(eq(products.id, productId), gte(products.stock, quantity)),
+            )
             .returning({ id: products.id });
 
           if (updateResult.length === 0) {
@@ -2529,7 +2604,10 @@ export class PostgresStorage implements IStorage {
   }
 
   async getOrder(id: number): Promise<Order | undefined> {
-    const result = await db.primary.select().from(orders).where(eq(orders.id, id));
+    const result = await db.primary
+      .select()
+      .from(orders)
+      .where(eq(orders.id, id));
     return result[0];
   }
 
@@ -2609,8 +2687,19 @@ export class PostgresStorage implements IStorage {
       earningsToday: number;
       earningsMonth: number;
       earningsTotal: number;
-      customerSpendTotals: { customerId: number; name: string | null; phone: string | null; totalSpent: number; orderCount: number }[];
-      itemSalesTotals: { productId: number; name: string | null; quantity: number; totalAmount: number }[];
+      customerSpendTotals: {
+        customerId: number;
+        name: string | null;
+        phone: string | null;
+        totalSpent: number;
+        orderCount: number;
+      }[];
+      itemSalesTotals: {
+        productId: number;
+        name: string | null;
+        quantity: number;
+        totalAmount: number;
+      }[];
     }>(cacheKey);
     if (cached) {
       return cached;
@@ -2682,7 +2771,10 @@ export class PostgresStorage implements IStorage {
         .select({ value: totalRevenueSql })
         .from(orders)
         .where(and(paidOrderFilters, gte(orders.orderDate, startOfMonth))),
-      readDb.select({ value: totalRevenueSql }).from(orders).where(paidOrderFilters),
+      readDb
+        .select({ value: totalRevenueSql })
+        .from(orders)
+        .where(paidOrderFilters),
       readDb
         .select({
           customerId: orders.customerId,
@@ -2943,11 +3035,16 @@ export class PostgresStorage implements IStorage {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { sendPushToTokens, createPushData } = await import("./services/push-notification");
+      const { sendPushToTokens, createPushData } = await import(
+        "./services/push-notification"
+      );
 
       const fcmTokenRecords = await this.getFcmTokensByUserId(userId);
       if (fcmTokenRecords.length === 0) {
-        logger.debug({ userId }, "No FCM tokens registered for user, skipping push notification");
+        logger.debug(
+          { userId },
+          "No FCM tokens registered for user, skipping push notification",
+        );
         return;
       }
 
@@ -2971,14 +3068,21 @@ export class PostgresStorage implements IStorage {
         db.primary
           .select({ id: shopWorkers.id })
           .from(shopWorkers)
-          .where(and(eq(shopWorkers.workerUserId, userId), eq(shopWorkers.active, true)))
+          .where(
+            and(
+              eq(shopWorkers.workerUserId, userId),
+              eq(shopWorkers.active, true),
+            ),
+          )
           .limit(1),
       ]);
 
-      const hasShopAccess = isShopRole || shopResult.length > 0 || workerResult.length > 0;
+      const hasShopAccess =
+        isShopRole || shopResult.length > 0 || workerResult.length > 0;
       const hasProviderAccess = isProviderRole || providerResult.length > 0;
 
-      const resolvedRelatedId = relatedId ?? this.extractRelatedIdFromText(type, title, body);
+      const resolvedRelatedId =
+        relatedId ?? this.extractRelatedIdFromText(type, title, body);
       const clickUrl = this.getClickUrlForNotification({
         notificationType: type,
         title,
@@ -3002,7 +3106,7 @@ export class PostgresStorage implements IStorage {
         "Push notification payload ready",
       );
 
-      const tokens = fcmTokenRecords.map(t => t.token);
+      const tokens = fcmTokenRecords.map((t) => t.token);
       const result = await sendPushToTokens(tokens, {
         title,
         body,
@@ -3010,8 +3114,12 @@ export class PostgresStorage implements IStorage {
       });
 
       logger.info(
-        { userId, successCount: result.successCount, failureCount: result.failureCount },
-        "Push notification send complete"
+        {
+          userId,
+          successCount: result.successCount,
+          failureCount: result.failureCount,
+        },
+        "Push notification send complete",
       );
 
       // Clean up invalid tokens
@@ -3021,7 +3129,7 @@ export class PostgresStorage implements IStorage {
         }
         logger.info(
           { count: result.invalidTokens.length, userId },
-          "Cleaned up invalid FCM tokens"
+          "Cleaned up invalid FCM tokens",
         );
       }
     } catch (error) {
@@ -3040,7 +3148,8 @@ export class PostgresStorage implements IStorage {
   ): number | null {
     const normalizedType = notificationType.toLowerCase();
     const isOrder = normalizedType.includes("order");
-    const isBooking = normalizedType.includes("booking") || normalizedType.includes("service");
+    const isBooking =
+      normalizedType.includes("booking") || normalizedType.includes("service");
 
     if (!isOrder && !isBooking) {
       return null;
@@ -3179,7 +3288,9 @@ export class PostgresStorage implements IStorage {
 
       case "booking_rescheduled_request":
         if (hasProviderAccess) {
-          return buildProviderBookingsUrl("rescheduled_pending_provider_approval");
+          return buildProviderBookingsUrl(
+            "rescheduled_pending_provider_approval",
+          );
         }
         return buildCustomerBookingsUrl(relatedId);
 
@@ -3273,9 +3384,7 @@ export class PostgresStorage implements IStorage {
     const updated = await db.primary
       .update(notifications)
       .set({ isRead: true })
-      .where(
-        and(eq(notifications.id, id), eq(notifications.userId, userId)),
-      )
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
       .returning({ userId: notifications.userId });
 
     if (!updated[0]) {
@@ -3297,9 +3406,7 @@ export class PostgresStorage implements IStorage {
   async deleteNotification(id: number, userId: number): Promise<void> {
     const deleted = await db.primary
       .delete(notifications)
-      .where(
-        and(eq(notifications.id, id), eq(notifications.userId, userId)),
-      )
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
       .returning({ userId: notifications.userId });
 
     if (!deleted[0]) {
@@ -3338,17 +3445,17 @@ export class PostgresStorage implements IStorage {
   }
 
   async deleteFcmToken(token: string, userId?: number): Promise<void> {
-    await db.primary.delete(fcmTokens).where(
-      userId == null
-        ? eq(fcmTokens.token, token)
-        : and(eq(fcmTokens.token, token), eq(fcmTokens.userId, userId)),
-    );
+    await db.primary
+      .delete(fcmTokens)
+      .where(
+        userId == null
+          ? eq(fcmTokens.token, token)
+          : and(eq(fcmTokens.token, token), eq(fcmTokens.userId, userId)),
+      );
   }
 
   async deleteFcmTokensByUserId(userId: number): Promise<void> {
-    await db.primary
-      .delete(fcmTokens)
-      .where(eq(fcmTokens.userId, userId));
+    await db.primary.delete(fcmTokens).where(eq(fcmTokens.userId, userId));
   }
 
   // ─── ADDITIONAL / ENHANCED OPERATIONS ─────────────────────────────
@@ -3358,12 +3465,17 @@ export class PostgresStorage implements IStorage {
     timeSlotLabel?: TimeSlotLabel | null,
   ): Promise<boolean> {
     const service = await this.getService(serviceId);
-    if (service && (service.isAvailable === false || service.isAvailableNow === false)) {
+    if (
+      !service ||
+      service.isDeleted ||
+      service.isAvailable === false ||
+      service.isAvailableNow === false
+    ) {
       return false;
     }
 
     // Check if the requested slot is allowed by the provider
-    if (service && timeSlotLabel && service.allowedSlots) {
+    if (timeSlotLabel && service.allowedSlots) {
       const allowed = service.allowedSlots as TimeSlotLabel[];
       if (!allowed.includes(timeSlotLabel)) {
         return false;
@@ -3464,56 +3576,58 @@ export class PostgresStorage implements IStorage {
     if (expiredBookings.length === 0) return;
 
     // PERFORMANCE FIX: Pre-fetch all services in one query instead of N queries
-    const serviceIds = Array.from(new Set(
-      expiredBookings
-        .map(b => b.serviceId)
-        .filter((id): id is number => typeof id === "number")
-    ));
-    const servicesList = serviceIds.length > 0
-      ? await this.getServicesByIds(serviceIds)
-      : [];
-    const serviceMap = new Map(servicesList.map(s => [s.id, s]));
+    const serviceIds = Array.from(
+      new Set(
+        expiredBookings
+          .map((b) => b.serviceId)
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    );
+    const servicesList =
+      serviceIds.length > 0 ? await this.getServicesByIds(serviceIds) : [];
+    const serviceMap = new Map(servicesList.map((s) => [s.id, s]));
 
     // PERFORMANCE FIX: Process bookings in parallel batches
     const BATCH_SIZE = 10;
     for (let i = 0; i < expiredBookings.length; i += BATCH_SIZE) {
       const batch = expiredBookings.slice(i, i + BATCH_SIZE);
 
-      await Promise.all(batch.map(async (booking) => {
-        await this.updateBooking(booking.id, {
-          status: "expired",
-          comments: "Automatically expired after 7 days",
-        });
+      await Promise.all(
+        batch.map(async (booking) => {
+          await this.updateBooking(booking.id, {
+            status: "expired",
+            comments: "Automatically expired after 7 days",
+          });
 
-        await this.createNotification({
-          userId: booking.customerId,
-          type: "booking_expired",
-          title: "Booking Request Expired",
-          message:
-            "Your booking request has expired as the service provider did not respond within 7 days.",
-          isRead: false,
-        });
-
-        const service = typeof booking.serviceId === "number"
-          ? serviceMap.get(booking.serviceId)
-          : undefined;
-        if (service) {
           await this.createNotification({
-            userId: service.providerId,
+            userId: booking.customerId,
             type: "booking_expired",
             title: "Booking Request Expired",
-            message: `A booking request for ${service.name} has expired as you did not respond within 7 days.`,
+            message:
+              "Your booking request has expired as the service provider did not respond within 7 days.",
             isRead: false,
           });
-        }
-      }));
+
+          const service =
+            typeof booking.serviceId === "number"
+              ? serviceMap.get(booking.serviceId)
+              : undefined;
+          if (service) {
+            await this.createNotification({
+              userId: service.providerId,
+              type: "booking_expired",
+              title: "Booking Request Expired",
+              message: `A booking request for ${service.name} has expired as you did not respond within 7 days.`,
+              isRead: false,
+            });
+          }
+        }),
+      );
     }
   }
 
   // Asynchronously compute last-update timestamp for sorting.
   // Removed duplicate implementation of getBookingHistoryForCustomer to resolve the duplicate function error.
-
-
 
   async updateBookingStatus(
     id: number,
@@ -3661,7 +3775,10 @@ export class PostgresStorage implements IStorage {
         .limit(1);
       if (existing[0]) throw new Error("Duplicate review");
     }
-    const result = await db.primary.insert(productReviews).values(review).returning();
+    const result = await db.primary
+      .insert(productReviews)
+      .values(review)
+      .returning();
     return result[0];
   }
 
@@ -3903,7 +4020,10 @@ export class PostgresStorage implements IStorage {
       .select({ position: sql<number>`COUNT(*)::int` })
       .from(waitlist)
       .where(
-        and(eq(waitlist.serviceId, serviceId), sql`${waitlist.id} <= ${targetId}`),
+        and(
+          eq(waitlist.serviceId, serviceId),
+          sql`${waitlist.id} <= ${targetId}`,
+        ),
       );
     return Number(positionRows[0]?.position ?? -1);
   }
@@ -3945,12 +4065,18 @@ export class PostgresStorage implements IStorage {
   }
 
   async getReturnRequest(id: number): Promise<ReturnRequest | undefined> {
-    const res = await db.primary.select().from(returns).where(eq(returns.id, id));
+    const res = await db.primary
+      .select()
+      .from(returns)
+      .where(eq(returns.id, id));
     return res[0];
   }
 
   async getReturnRequestsByOrder(orderId: number): Promise<ReturnRequest[]> {
-    return await db.primary.select().from(returns).where(eq(returns.orderId, orderId));
+    return await db.primary
+      .select()
+      .from(returns)
+      .where(eq(returns.orderId, orderId));
   }
 
   async getReturnRequestsForShop(shopId: number): Promise<ReturnRequest[]> {
@@ -4002,7 +4128,9 @@ export class PostgresStorage implements IStorage {
   }
 
   // Global search with database-side filtering, distance calculation, and sorting
-  async globalSearch(params: GlobalSearchParams): Promise<GlobalSearchResult[]> {
+  async globalSearch(
+    params: GlobalSearchParams,
+  ): Promise<GlobalSearchResult[]> {
     const { query, lat, lng, radiusKm, limit, excludeUserId } = params;
     const normalizedQuery = query.trim().toLowerCase();
     if (normalizedQuery.length === 0) {
@@ -4022,36 +4150,39 @@ export class PostgresStorage implements IStorage {
 
     const serviceGeo = hasLocation
       ? buildGeoDistanceCondition({
-        columnLat: users.latitude,
-        columnLng: users.longitude,
-        lat: Number(lat),
-        lng: Number(lng),
-        radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
-        usePostgis,
-      })
+          columnLat: users.latitude,
+          columnLng: users.longitude,
+          lat: Number(lat),
+          lng: Number(lng),
+          radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
+          usePostgis,
+        })
       : null;
     const productGeo = hasLocation
       ? buildGeoDistanceCondition({
-        columnLat: shops.shopLocationLat,
-        columnLng: shops.shopLocationLng,
-        lat: Number(lat),
-        lng: Number(lng),
-        radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
-        usePostgis,
-      })
+          columnLat: shops.shopLocationLat,
+          columnLng: shops.shopLocationLng,
+          lat: Number(lat),
+          lng: Number(lng),
+          radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
+          usePostgis,
+        })
       : null;
     const shopGeo = hasLocation
       ? buildGeoDistanceCondition({
-        columnLat: shops.shopLocationLat,
-        columnLng: shops.shopLocationLng,
-        lat: Number(lat),
-        lng: Number(lng),
-        radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
-        usePostgis,
-      })
+          columnLat: shops.shopLocationLat,
+          columnLng: shops.shopLocationLng,
+          lat: Number(lat),
+          lng: Number(lng),
+          radiusKm: Number(radiusKm ?? DEFAULT_NEARBY_RADIUS_KM),
+          usePostgis,
+        })
       : null;
 
-    const buildTextMatchCondition = (nameCol: unknown, descCol: unknown): SQL => {
+    const buildTextMatchCondition = (
+      nameCol: unknown,
+      descCol: unknown,
+    ): SQL => {
       const phraseMatch = sql`(
         ${nameCol} ILIKE ${containsPattern} ESCAPE '\\'
         OR COALESCE(${descCol}, '') ILIKE ${containsPattern} ESCAPE '\\'
@@ -4072,7 +4203,9 @@ export class PostgresStorage implements IStorage {
           : wordClause;
       }
 
-      return wordAndChain ? sql`(${phraseMatch} OR (${wordAndChain}))` : phraseMatch;
+      return wordAndChain
+        ? sql`(${phraseMatch} OR (${wordAndChain}))`
+        : phraseMatch;
     };
 
     // Relevance scoring helper
@@ -4107,7 +4240,11 @@ export class PostgresStorage implements IStorage {
         city: users.addressCity,
         state: users.addressState,
         distanceKm: servicesDistanceExpr.as("distance_km"),
-        relevanceScore: relevanceExpr(services.name, services.description, servicesDistanceExpr).as("relevance_score"),
+        relevanceScore: relevanceExpr(
+          services.name,
+          services.description,
+          servicesDistanceExpr,
+        ).as("relevance_score"),
       })
       .from(services)
       .leftJoin(users, eq(services.providerId, users.id))
@@ -4117,8 +4254,10 @@ export class PostgresStorage implements IStorage {
           buildTextMatchCondition(services.name, services.description),
           serviceGeo?.condition,
           // Exclude user's own services
-          excludeUserId !== undefined ? ne(services.providerId, excludeUserId) : undefined
-        )
+          excludeUserId !== undefined
+            ? ne(services.providerId, excludeUserId)
+            : undefined,
+        ),
       )
       .orderBy(desc(sql`relevance_score`), asc(sql`distance_km`))
       .limit(searchLimit);
@@ -4138,7 +4277,11 @@ export class PostgresStorage implements IStorage {
         city: shops.shopAddressCity,
         state: shops.shopAddressState,
         distanceKm: productsDistanceExpr.as("distance_km"),
-        relevanceScore: relevanceExpr(products.name, products.description, productsDistanceExpr).as("relevance_score"),
+        relevanceScore: relevanceExpr(
+          products.name,
+          products.description,
+          productsDistanceExpr,
+        ).as("relevance_score"),
       })
       .from(products)
       .leftJoin(shops, eq(products.shopId, shops.ownerId))
@@ -4148,8 +4291,10 @@ export class PostgresStorage implements IStorage {
           buildTextMatchCondition(products.name, products.description),
           productGeo?.condition,
           // Exclude user's own products (products from their shop)
-          excludeUserId !== undefined ? ne(products.shopId, excludeUserId) : undefined
-        )
+          excludeUserId !== undefined
+            ? ne(products.shopId, excludeUserId)
+            : undefined,
+        ),
       )
       .orderBy(desc(sql`relevance_score`), asc(sql`distance_km`))
       .limit(searchLimit);
@@ -4166,7 +4311,11 @@ export class PostgresStorage implements IStorage {
         city: shops.shopAddressCity,
         state: shops.shopAddressState,
         distanceKm: shopsDistanceExpr.as("distance_km"),
-        relevanceScore: relevanceExpr(shops.shopName, shops.description, shopsDistanceExpr).as("relevance_score"),
+        relevanceScore: relevanceExpr(
+          shops.shopName,
+          shops.description,
+          shopsDistanceExpr,
+        ).as("relevance_score"),
       })
       .from(shops)
       .leftJoin(users, eq(shops.ownerId, users.id))
@@ -4175,8 +4324,10 @@ export class PostgresStorage implements IStorage {
           buildTextMatchCondition(shops.shopName, shops.description),
           shopGeo?.condition,
           // Exclude user's own shop
-          excludeUserId !== undefined ? ne(shops.ownerId, excludeUserId) : undefined
-        )
+          excludeUserId !== undefined
+            ? ne(shops.ownerId, excludeUserId)
+            : undefined,
+        ),
       )
       .orderBy(desc(sql`relevance_score`), asc(sql`distance_km`))
       .limit(searchLimit);
@@ -4241,8 +4392,13 @@ export class PostgresStorage implements IStorage {
 
     // Final sort in memory
     combined.sort((a, b) => {
-      if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
-      if (a.distanceKm !== null && b.distanceKm !== null && a.distanceKm !== b.distanceKm) {
+      if (b.relevanceScore !== a.relevanceScore)
+        return b.relevanceScore - a.relevanceScore;
+      if (
+        a.distanceKm !== null &&
+        b.distanceKm !== null &&
+        a.distanceKm !== b.distanceKm
+      ) {
         return a.distanceKm - b.distanceKm;
       }
       return (a.name ?? "").localeCompare(b.name ?? "");
