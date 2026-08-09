@@ -148,6 +148,7 @@ describe("endpoint: POST /api/auth/create-shop", () => {
     await handler(req, res);
 
     assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual(req.user.hasShopProfile, true);
     assert.strictEqual(insertPayloads.length, 1);
     assert.deepStrictEqual(insertPayloads[0], {
       ownerId: 25,
@@ -185,5 +186,39 @@ describe("endpoint: POST /api/auth/create-shop", () => {
 
     assert.strictEqual(res.statusCode, 400);
     assert.strictEqual(res.body?.message, "Invalid shop profile data");
+  });
+
+  it("marks a newly created provider profile on the active session", async () => {
+    const { app, routes } = createMockApp();
+    registerAuthRoutes(app as any);
+
+    mock.method(db.primary, "select", () => createSelectChain([]));
+    mock.method(db.primary, "insert", () => ({
+      values: (payload: unknown) => ({
+        returning: async () => [{ id: 902, ...(payload as Record<string, unknown>) }],
+      }),
+    }) as any);
+
+    const handler = findRoute(routes, "post", "/api/auth/create-provider");
+    const req: any = createMockReq({
+      method: "POST",
+      path: "/api/auth/create-provider",
+      user: { id: 52, role: "customer" },
+      isAuthenticated: true,
+      body: { bio: "Local services" },
+    });
+    const res: any = createMockRes();
+
+    await handler(req, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    assert.strictEqual(req.user.hasProviderProfile, true);
+    assert.deepStrictEqual(res.body, {
+      id: 902,
+      userId: 52,
+      bio: "Local services",
+      skills: [],
+      experience: undefined,
+    });
   });
 });

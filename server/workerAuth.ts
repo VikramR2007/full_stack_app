@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-import { shopWorkers, type WorkerResponsibility } from "@shared/schema";
+import { shops, shopWorkers, type WorkerResponsibility } from "@shared/schema";
 
 export type RequestWithContext = Request & {
   isAuthenticated?: () => boolean;
@@ -30,6 +30,20 @@ export function requireShopOrWorkerPermission(
     }
     if (req.user?.isSuspended) {
       return res.status(403).json({ message: "Account suspended" });
+    }
+
+    // Refresh a profile capability if an old passport session still has the
+    // default customer flags. This keeps shop operations usable immediately
+    // after a customer creates a shop profile.
+    if (req.user?.role !== "shop" && !req.user?.hasShopProfile) {
+      const shopResult = await db.primary
+        .select({ id: shops.id })
+        .from(shops)
+        .where(eq(shops.ownerId, req.user!.id))
+        .limit(1);
+      if (shopResult.length > 0) {
+        req.user.hasShopProfile = true;
+      }
     }
 
     // Shop owners or users with shop profile always allowed

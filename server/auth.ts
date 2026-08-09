@@ -44,7 +44,11 @@ import {
   normalizePhone,
 } from "./utils/identity";
 import { sanitizeAndValidateSecret } from "./security/secretValidators";
-import { getCache, setCache } from "./services/cache.service";
+import {
+  getCache,
+  invalidateCache,
+  setCache,
+} from "./services/cache.service";
 import {
   getLocalAuthUser,
   isLocalAuthEnabled,
@@ -187,7 +191,9 @@ async function provisionLocalAuthUser(configuredUser: LocalAuthUser) {
       !existingUser.isPhoneVerified ||
       updates.pin
     ) {
-      return storage.updateUser(existingUser.id, updates);
+      const updatedUser = await storage.updateUser(existingUser.id, updates);
+      await invalidateCache(`user_session:${existingUser.id}`);
+      return updatedUser;
     }
     return existingUser;
   }
@@ -214,6 +220,43 @@ async function provisionLocalAuthUser(configuredUser: LocalAuthUser) {
     });
   } else if (configuredUser.role === "provider") {
     await db.primary.insert(providers).values({ userId: user.id });
+  }
+
+  await invalidateCache(`user_session:${user.id}`);
+
+  return user;
+}
+
+/**
+ * Profile capabilities are derived from the shops/providers tables rather than
+ * the user's primary role. Refresh them whenever a session is hydrated so a
+ * customer who creates a second profile can use it immediately.
+ */
+async function hydrateProfileCapabilities(user: Express.User): Promise<Express.User> {
+  if (process.env.NODE_ENV === "test") {
+    user.hasShopProfile = user.role === "shop" || Boolean(user.shopProfile);
+    user.hasProviderProfile = user.role === "provider";
+    return user;
+  }
+
+  try {
+    const [shopExists, providerExists] = await Promise.all([
+      db.primary
+        .select({ id: shops.id })
+        .from(shops)
+        .where(eq(shops.ownerId, user.id))
+        .limit(1),
+      db.primary
+        .select({ id: providers.id })
+        .from(providers)
+        .where(eq(providers.userId, user.id))
+        .limit(1),
+    ]);
+
+    user.hasShopProfile = shopExists.length > 0;
+    user.hasProviderProfile = providerExists.length > 0;
+  } catch (error) {
+    logger.warn({ err: error, userId: user.id }, "Failed to refresh profile capabilities");
   }
 
   return user;
@@ -320,6 +363,16 @@ export function initializeAuth(app: Express) {
       const cachedUser = await getCache<Express.User>(cacheKey);
 
       if (cachedUser) {
+        // Older cache entries did not contain capability flags. Refresh those
+        // entries once; current entries are kept fast and role guards still
+        // refresh a missing capability immediately when it is needed.
+        if (
+          cachedUser.hasShopProfile === undefined ||
+          cachedUser.hasProviderProfile === undefined
+        ) {
+          await hydrateProfileCapabilities(cachedUser);
+          await setCache(cacheKey, cachedUser, 300);
+        }
         // Hydrate Date objects from JSON
         if (typeof cachedUser.createdAt === "string") {
           cachedUser.createdAt = new Date(cachedUser.createdAt);
@@ -333,40 +386,9 @@ export function initializeAuth(app: Express) {
       }
       const safeUser = sanitizeUser(user);
 
-      // Check for shop and provider profiles
       if (safeUser) {
-        // Skip DB profile lookup in test environment
-        const skipDbProfiles = process.env.NODE_ENV === "test";
+        await hydrateProfileCapabilities(safeUser as Express.User);
 
-        if (skipDbProfiles) {
-          (safeUser as any).hasShopProfile =
-            user.role === "shop" || Boolean(user.shopProfile);
-          (safeUser as any).hasProviderProfile = user.role === "provider";
-        } else {
-          try {
-            // PERFORMANCE FIX: Execute both queries in parallel instead of sequentially
-            const [shopExists, providerExists] = await Promise.all([
-              db.primary
-                .select({ id: shops.id })
-                .from(shops)
-                .where(eq(shops.ownerId, user.id))
-                .limit(1),
-              db.primary
-                .select({ id: providers.id })
-                .from(providers)
-                .where(eq(providers.userId, user.id))
-                .limit(1),
-            ]);
-
-            (safeUser as any).hasShopProfile = shopExists.length > 0;
-            (safeUser as any).hasProviderProfile = providerExists.length > 0;
-          } catch (err) {
-            logger.warn({ err }, "Failed to fetch additional profiles during deserialization");
-            // Don't fail the whole request, just proceed without profile flags
-          }
-        }
-
-        // PERFORMANCE FIX: Increased cache TTL from 60s to 300s (5 minutes)
         await setCache(cacheKey, safeUser, 300);
       }
 
@@ -1179,10 +1201,17 @@ export function registerAuthRoutes(app: Express) {
         .where(eq(providers.userId, userId))
         .limit(1);
 
+      const hasShop = shopResult.length > 0;
+      const hasProvider = providerResult.length > 0;
+
+      req.user.hasShopProfile = hasShop;
+      req.user.hasProviderProfile = hasProvider;
+      await setCache(`user_session:${userId}`, req.user, 300);
+
       return res.json({
-        hasShop: shopResult.length > 0,
+        hasShop,
         shop: shopResult[0] ?? null,
-        hasProvider: providerResult.length > 0,
+        hasProvider,
         provider: providerResult[0] ?? null,
       });
     } catch (error) {
@@ -1308,6 +1337,9 @@ export function registerAuthRoutes(app: Express) {
         shopLocationLng: resolvedLng,
       }).returning();
 
+      req.user.hasShopProfile = true;
+      await invalidateCache(`user_session:${userId}`);
+
       return res.status(201).json(shop);
     } catch (error) {
       logger.error({ err: error }, "Failed to create shop");
@@ -1343,6 +1375,9 @@ export function registerAuthRoutes(app: Express) {
         skills: skills ?? [],
         experience: experience?.trim(),
       }).returning();
+
+      req.user.hasProviderProfile = true;
+      await invalidateCache(`user_session:${userId}`);
 
       return res.status(201).json(provider);
     } catch (error) {

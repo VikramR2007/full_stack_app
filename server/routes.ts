@@ -52,6 +52,7 @@ import {
   TimeSlotLabel,
   timeSlotLabelSchema,
   shops,
+  providers,
   shopWorkers,
   InsertNotification,
   bookings,
@@ -1299,7 +1300,51 @@ function requireAuth(req: any, res: any, next: any) {
 }
 
 function requireRole(roles: string[]) {
-  return (req: any, res: any, next: any) => {
+  return async (req: any, res: any, next: any) => {
+    // A user's shop/provider capability is stored in profile tables and may
+    // have changed after the passport session was cached. Refresh only the
+    // capability needed by this guard before deciding access.
+    if (req.user) {
+      try {
+        let refreshed = false;
+        if (
+          roles.includes("shop") &&
+          req.user.role !== "shop" &&
+          !req.user.hasShopProfile
+        ) {
+          const shopResult = await db.primary
+            .select({ id: shops.id })
+            .from(shops)
+            .where(eq(shops.ownerId, req.user.id))
+            .limit(1);
+          if (shopResult.length > 0) {
+            req.user.hasShopProfile = true;
+            refreshed = true;
+          }
+        }
+        if (
+          roles.includes("provider") &&
+          req.user.role !== "provider" &&
+          !req.user.hasProviderProfile
+        ) {
+          const providerResult = await db.primary
+            .select({ id: providers.id })
+            .from(providers)
+            .where(eq(providers.userId, req.user.id))
+            .limit(1);
+          if (providerResult.length > 0) {
+            req.user.hasProviderProfile = true;
+            refreshed = true;
+          }
+        }
+        if (refreshed) {
+          await setCache(`user_session:${req.user.id}`, req.user, 300);
+        }
+      } catch (error) {
+        logger.warn({ err: error, userId: req.user.id }, "Failed to refresh role capability");
+      }
+    }
+
     if (!hasRoleAccess(req.user, roles)) {
       return res.status(403).send("Forbidden");
     }
@@ -1312,6 +1357,12 @@ function ensureProfileVerified(
   res: Response,
   actionDescription: string,
 ): boolean {
+  // Verification remains a production policy. In local development it should
+  // not block normal profile, service, booking, or product flows.
+  if ((process.env.NODE_ENV ?? "").toLowerCase() !== "production") {
+    return true;
+  }
+
   const status = req.user?.verificationStatus;
   if (status !== "verified") {
     res.status(403).json({
