@@ -47,6 +47,41 @@ fun escapeBuildConfig(value: String): String {
     return value.replace("\\", "\\\\").replace("\"", "\\\"")
 }
 
+fun configuredValue(name: String): String? {
+    return (project.findProperty(name) as String?)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+fun dotEnvValue(name: String): String? {
+    val envFile = rootProject.projectDir.parentFile.resolve(".env")
+    if (!envFile.isFile) return null
+
+    val prefix = "$name="
+    return envFile.useLines { lines ->
+        lines
+            .map { it.trim() }
+            .firstOrNull { it.startsWith(prefix) && !it.startsWith("#") }
+            ?.substring(prefix.length)
+            ?.trim()
+            ?.trim('"', '\'')
+            ?.takeIf { it.isNotEmpty() }
+    }
+}
+
+val localApiPort = configuredValue("LOCAL_API_PORT")?.toIntOrNull()
+    ?: dotEnvValue("PORT")?.toIntOrNull()
+    ?: 5001
+val localApiBaseUrl = (configuredValue("LOCAL_API_BASE_URL") ?: "http://10.0.2.2:$localApiPort")
+    .trimEnd('/')
+    .also {
+        require(it.startsWith("http://") || it.startsWith("https://")) {
+            "LOCAL_API_BASE_URL must start with http:// or https://"
+        }
+    }
+val escapedLocalApiBaseUrl = escapeBuildConfig(localApiBaseUrl)
+
 android {
     namespace = "com.doorstep.tn"
     compileSdk = 35
@@ -83,8 +118,11 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            // For local development, use emulator-friendly URL
-            buildConfigField("String", "API_BASE_URL", "\"https://doorsteptn.in\"")
+            // Android emulator reaches the host machine at 10.0.2.2. Override with
+            // -PLOCAL_API_BASE_URL=http://<computer-lan-ip>:<port> for a physical device.
+            buildConfigField("String", "API_BASE_URL", "\"$escapedLocalApiBaseUrl\"")
+            // Certificate pins are for the HTTPS release host and must not be applied to local HTTP.
+            buildConfigField("String", "API_CERT_PINS", "\"\"")
         }
         release {
             isMinifyEnabled = true

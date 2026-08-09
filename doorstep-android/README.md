@@ -110,6 +110,17 @@ Let Gradle sync complete.
 
 ## 6. Build and Run (Debug)
 
+Start the backend from the repository root first:
+
+```bash
+cd ..
+npm run dev:server
+```
+
+The debug Android build automatically uses `http://10.0.2.2:<PORT>` for the
+Android emulator. `<PORT>` is read from the repository root `.env` file and
+defaults to `5001`, so it follows the same local API port as the web app.
+
 From CLI:
 
 ```bash
@@ -133,9 +144,24 @@ Run unit tests:
 
 ### 7.1 API base URL
 
-`API_BASE_URL` is defined in `app/build.gradle.kts` (currently `https://doorsteptn.in` for debug and release).
+Debug and release intentionally use different API URLs:
 
-If you need local backend testing, change debug `API_BASE_URL` to your local/QA URL and rebuild.
+- Debug defaults to `http://10.0.2.2:<PORT>` for the Android emulator.
+- Release uses `https://doorsteptn.in`.
+
+For a physical Android device, put the computer and phone on the same network,
+ensure the backend is listening on the computer's network interface, then pass
+the computer's LAN address when building:
+
+```bash
+./gradlew :app:assembleDebug \
+  -PLOCAL_API_BASE_URL=http://192.168.1.10:5001
+```
+
+Replace the address with the computer's current LAN IP. Genymotion uses
+`http://10.0.3.2:<PORT>` instead of `10.0.2.2`. You can also set
+`LOCAL_API_BASE_URL` in the environment. Local cleartext is enabled only in
+debug builds; release keeps HTTPS and certificate-pin validation.
 
 ### 7.2 Session and CSRF handling
 
@@ -146,7 +172,8 @@ The app uses cookie-session + CSRF, same as web:
 
 ### 7.3 TLS and pinning
 
-- cleartext traffic is disabled (`network_security_config.xml`)
+- release cleartext traffic is disabled (`network_security_config.xml`); debug
+  permits only the local HTTP endpoint needed for development
 - optional certificate pinning uses `API_CERT_PINS`
 
 ## 8. Firebase Auth and Push
