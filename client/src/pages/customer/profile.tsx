@@ -82,7 +82,12 @@ export default function CustomerProfile() {
 
   const updateProfileMutation = useMutation({
     mutationFn: async (data: Partial<User>) => {
-      const res = await apiRequest("PATCH", `/api/users/${user?.id}`, data);
+      const { phone: _ignoredPhone, ...editableProfile } = data;
+      const res = await apiRequest(
+        "PATCH",
+        `/api/users/${user?.id}`,
+        editableProfile,
+      );
       return res.json();
     },
     onSuccess: (_updatedUser: User) => {

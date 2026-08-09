@@ -2594,6 +2594,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           typeof value === "string" && value.trim().length === 0 ? null : value,
         z.string().optional().nullable(),
       ),
+      // Phone is the login identity and is not changed by this endpoint, but
+      // older profile forms still submit the unchanged value. Accept it for
+      // compatibility and strip it before persistence below.
+      phone: z.string().trim().min(8).max(20).optional().nullable(),
       pickupAvailable: z.boolean().optional(),
       deliveryAvailable: z.boolean().optional(),
       returnsEnabled: z.boolean().optional(),
@@ -2616,8 +2620,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // All users can update UPI fields now (for receiving payments)
       // Previously only allowed for provider/shop roles
 
+      // Phone is an immutable login identity here. Profile forms may include
+      // the existing value, but it must never be persisted as an edit.
+      const { phone: _ignoredPhone, ...editableProfileData } = result.data;
+
       // Sanitize paymentMethods using shared schema
-      let updateData: Partial<User> = { ...result.data } as Partial<User>;
+      let updateData: Partial<User> = { ...editableProfileData } as Partial<User>;
       if ("paymentMethods" in updateData) {
         const pmResult = PaymentMethodSchema.array().safeParse(
           (updateData as any).paymentMethods,

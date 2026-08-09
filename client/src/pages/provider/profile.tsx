@@ -145,7 +145,12 @@ export default function ProviderProfile() {
   const updateProfileMutation = useMutation({
     mutationFn: async (data: ProfileFormData) => {
       if (!user?.id) throw new Error("User not found");
-      const res = await apiRequest("PATCH", `/api/users/${user.id}`, data);
+      const { phone: _ignoredPhone, ...editableProfile } = data;
+      const res = await apiRequest(
+        "PATCH",
+        `/api/users/${user.id}`,
+        editableProfile,
+      );
       const updatedUser = await res.json();
       return updatedUser;
     },
@@ -169,22 +174,7 @@ export default function ProviderProfile() {
   });
 
   const onSubmit = (data: ProfileFormData) => {
-    updateProfileMutation.mutate({
-      name: data.name,
-      phone: data.phone,
-      email: data.email,
-      addressStreet: data.addressStreet,
-      addressCity: data.addressCity,
-      addressState: data.addressState,
-      addressPostalCode: data.addressPostalCode,
-      addressCountry: data.addressCountry,
-      bio: data.bio,
-      qualifications: data.qualifications,
-      experience: data.experience,
-      workingHours: data.workingHours,
-      languages: data.languages,
-      upiId: data.upiId,
-    });
+    updateProfileMutation.mutate(data);
   };
 
   const deleteAccountMutation = useMutation({
