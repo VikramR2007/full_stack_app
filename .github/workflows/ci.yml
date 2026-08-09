@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
   actions: write
 
 env:
-  ENABLE_ARTIFACT_UPLOAD: 'false'
+  ENABLE_ARTIFACT_UPLOAD: "false"
 
 jobs:
   test:
@@ -20,11 +20,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: "npm"
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run check
       - run: npm run test:coverage
       - run: npm run lint
+      - run: npm run db:check
       - name: Remove existing repo artifacts
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/github-script@v8
@@ -65,3 +68,16 @@ jobs:
           name: coverage
           path: coverage
           retention-days: 1
+
+  android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Build Android debug APK
+        working-directory: doorstep-android
+        run: ./gradlew :app:assembleDebug --no-daemon

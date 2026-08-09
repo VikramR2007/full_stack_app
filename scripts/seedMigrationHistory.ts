@@ -31,10 +31,41 @@ function getSnapshotPath(metaDir: string, idx: number) {
   return path.join(metaDir, `${padded}_snapshot.json`);
 }
 
-async function ensureExpectedTablesExist(
-  sqlClient: Sql,
-  snapshot: Snapshot,
+async function findLatestAvailableSnapshot(
+  metaDir: string,
+  entries: JournalEntry[],
 ) {
+  const orderedEntries = [...entries].sort((a, b) => b.idx - a.idx);
+
+  for (const entry of orderedEntries) {
+    const snapshotPath = getSnapshotPath(metaDir, entry.idx);
+    try {
+      await fs.access(snapshotPath);
+      return { entry, snapshotPath };
+    } catch {
+      // Manual SQL migrations may not have a generated Drizzle snapshot.
+    }
+  }
+
+  const availableSnapshots = (await fs.readdir(metaDir))
+    .filter((fileName) => /^\d{4}_snapshot\.json$/.test(fileName))
+    .sort()
+    .reverse();
+
+  const latestSnapshot = availableSnapshots[0];
+  if (!latestSnapshot) return undefined;
+
+  const snapshotIdx = Number.parseInt(latestSnapshot.slice(0, 4), 10);
+  const entry = entries.find((candidate) => candidate.idx === snapshotIdx);
+  if (!entry) return undefined;
+
+  return {
+    entry,
+    snapshotPath: path.join(metaDir, latestSnapshot),
+  };
+}
+
+async function ensureExpectedTablesExist(sqlClient: Sql, snapshot: Snapshot) {
   const expectedTables = Object.entries(snapshot.tables)
     .map(([fullyQualified, config]) => {
       const [schemaFromKey, nameFromKey] = fullyQualified.split(".");
@@ -98,13 +129,30 @@ async function main() {
   const latestEntry = journal.entries.reduce((acc, entry) =>
     entry.idx > acc.idx ? entry : acc,
   );
-  const snapshotPath = getSnapshotPath(metaDir, latestEntry.idx);
+  const snapshotSelection = await findLatestAvailableSnapshot(
+    metaDir,
+    journal.entries,
+  );
+
+  if (!snapshotSelection) {
+    console.error(`No usable migration snapshot found in ${metaDir}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (snapshotSelection.entry.idx !== latestEntry.idx) {
+    console.warn(
+      `Latest migration '${latestEntry.tag}' has no generated snapshot; using '${snapshotSelection.entry.tag}' for table validation.`,
+    );
+  }
 
   let snapshot: Snapshot;
   try {
-    snapshot = await readJsonFile<Snapshot>(snapshotPath);
+    snapshot = await readJsonFile<Snapshot>(snapshotSelection.snapshotPath);
   } catch (error) {
-    console.error(`Failed to read snapshot at ${snapshotPath}`);
+    console.error(
+      `Failed to read snapshot at ${snapshotSelection.snapshotPath}`,
+    );
     console.error(error);
     process.exitCode = 1;
     return;
