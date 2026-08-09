@@ -117,9 +117,16 @@ export function useLocationFilter(
   });
   const [showManualInputs, setShowManualInputs] = useState(false);
 
+  // Sync from the profile only when the profile coordinates themselves
+  // change. Including `location` here makes Clear immediately run this
+  // effect again and restore the profile coordinates that were just cleared.
   useEffect(() => {
     setHasProfileLocation(Boolean(profileCoords));
     if (!profileCoords) {
+      if (source === "profile") {
+        setLocation(null);
+        setSource(null);
+      }
       return;
     }
     if (!location || source === "profile") {
@@ -130,7 +137,7 @@ export function useLocationFilter(
         longitude: profileCoords.longitude.toFixed(6),
       });
     }
-  }, [location, profileCoords, source]);
+  }, [profileCoords]);
 
   useEffect(() => {
     if (!location) {
